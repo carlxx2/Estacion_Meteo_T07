@@ -35,7 +35,7 @@
 #define MAX_INTENTOS   10
 #define THINGSBOARD_MQTT_URI "mqtt://demo.thingsboard.io"
 #define THINGSBOARD_ACCESS_TOKEN "CC34vYEp44Z00eoPKLfV"
-#define GITHUB_FIRMWARE_URL "https://github.com/carlxx2/Estacion_Meteo_T07/main/firmware/firmware.bin"
+#define GITHUB_FIRMWARE_URL "https://raw.githubusercontent.com/carlxx2/Estacion_Meteo_T07/main/firmware/firmware.bin"
 #define LDR_ADC_CHANNEL    ADC1_CHANNEL_4
 
 // =============================================================================
