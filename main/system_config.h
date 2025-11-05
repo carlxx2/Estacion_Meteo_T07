@@ -26,6 +26,7 @@
 #include "mqtt_client.h"
 #include "driver/adc.h"
 #include "esp_crt_bundle.h"
+#include "esp_mac.h"
 
 // =============================================================================
 // CONFIGURACIÓN - ¡ACTUALIZA CON TUS DATOS REALES!
@@ -33,6 +34,7 @@
 #define WIFI_SSID      "SBC"
 #define WIFI_PASS      "SBCwifi$"      
 #define MAX_INTENTOS   10
+#define AP_PASSWORD    "config123"
 #define THINGSBOARD_MQTT_URI "mqtt://demo.thingsboard.io"
 #define THINGSBOARD_ACCESS_TOKEN "CC34vYEp44Z00eoPKLfV"
 #define GITHUB_FIRMWARE_URL "https://raw.githubusercontent.com/carlxx2/Estacion_Meteo_T07/main/firmware/firmware.bin"
@@ -45,6 +47,8 @@
 // WiFi Manager
 void wifi_init_sta(void);
 bool wifi_is_connected(void);
+bool wifi_is_ap_mode(void);
+const char* wifi_get_ap_ssid(void);
 
 // MQTT Client
 void mqtt_init(void);

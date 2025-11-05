@@ -14,36 +14,52 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
     
-    // 2. INICIALIZAR WIFI
+    // 2. INICIALIZAR WIFI (AHORA CON MODO AP)
     wifi_init_sta();
     
+    // 3. VERIFICAR MODO DE OPERACIÓN
     if (wifi_is_connected()) {
-        // 3. INICIALIZAR MQTT
+        ESP_LOGI(TAG, "✅ Modo STA - Conectado a WiFi");
+        
+        // 4. INICIALIZAR MQTT
         mqtt_init();
         
-        // 4. INICIALIZAR SENSORES
+        // 5. INICIALIZAR SENSORES
         init_sensors();
         
-        // 5. VERIFICAR ACTUALIZACIONES OTA
+        // 6. VERIFICAR ACTUALIZACIONES OTA
         ESP_LOGI(TAG, "🔍 Verificando OTA...");
         check_ota_updates();
         
-        ESP_LOGI(TAG, "✅ Sistema operativo");
+        ESP_LOGI(TAG, "✅ Sistema operativo en modo STA");
         
-        // 6. LOOP PRINCIPAL
-        int cycle_count = 0;
-        while (1) {
-            cycle_count++;
-            ESP_LOGI(TAG, "=== CICLO %d ===", cycle_count);
-            
+    } else {
+        ESP_LOGW(TAG, "📡 Modo AP - Servidor de configuración activo");
+        ESP_LOGI(TAG, "   SSID: %s", wifi_get_ap_ssid());
+        ESP_LOGI(TAG, "   Contraseña: %s", AP_PASSWORD);
+        ESP_LOGI(TAG, "   IP: 192.168.4.1");
+        
+        // En modo AP, también inicializar sensores pero no MQTT
+        init_sensors();
+    }
+    
+    // 7. LOOP PRINCIPAL
+    int cycle_count = 0;
+    while (1) {
+        cycle_count++;
+        
+        if (wifi_is_connected()) {
+            // Modo STA: Leer sensores y enviar por MQTT
+            ESP_LOGI(TAG, "=== CICLO %d (STA) ===", cycle_count);
             float luminosity = read_ldr_value();
             send_mqtt_telemetry(luminosity);
-            
-            vTaskDelay(6000 / portTICK_PERIOD_MS);
+        } else {
+            // Modo AP: Solo leer sensores (para I2C/local)
+            ESP_LOGI(TAG, "=== CICLO %d (AP) ===", cycle_count);
+            float luminosity = read_ldr_value();
+            // Los datos están disponibles via I2C para otros dispositivos
         }
-    } else {
-        ESP_LOGE(TAG, "❌ Fallo WiFi - Reiniciando...");
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-        esp_restart();
+        
+        vTaskDelay(6000 / portTICK_PERIOD_MS);
     }
 }
