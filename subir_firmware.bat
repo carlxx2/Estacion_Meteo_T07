@@ -20,7 +20,7 @@ git add firmware/firmware.bin
 
 :: Hacer commit con mensaje fijo
 echo Haciendo commit...
-git commit -m "Firmware Update"
+git commit -m "Firmware Update 2.0"
 
 :: Subir cambios
 echo Subiendo cambios al repositorio remoto...

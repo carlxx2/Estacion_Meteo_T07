@@ -6,7 +6,8 @@ idf_component_register(
          "wifi_manager.c" 
          "mqtt_client.c"
          "ota_updater.c"
-         "sensor_reader.c"        
+         "sensor_reader.c"
+         "bme680_sensor.c"        
          				# list the source files of this component
     INCLUDE_DIRS        # optional, add here public include directories
     PRIV_INCLUDE_DIRS   # optional, add here private include directories

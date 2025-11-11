@@ -50,19 +50,39 @@ void mqtt_init(void) {
     }
 }
 
-void send_mqtt_telemetry(float luminosity) {
+// =============================================================================
+// FUNCIÓN ÚNICA MODIFICADA - ENVÍA TODOS LOS DATOS
+// =============================================================================
+void send_mqtt_telemetry(float luminosity, bme680_data_t *bme_data) {
     if (mqtt_conectado && mqtt_client) {
-        char message[100];
-        snprintf(message, sizeof(message), "{\"luminosity\":%.2f}", luminosity);
+        char message[512];
+        
+        // Crear JSON con TODOS los datos
+        snprintf(message, sizeof(message),
+                "{\"luminosity\":%.2f,"
+                "\"temperature\":%.2f,"
+                "\"humidity\":%.2f,"
+                "\"pressure\":%.2f,"
+                "\"gas_resistance\":%lu,"
+                "\"air_quality\":%.2f,"
+                "\"raw_gas\":%d}",
+                luminosity,
+                bme_data->temperature,
+                bme_data->humidity,
+                bme_data->pressure,
+                (unsigned long)bme_data->gas_resistance,
+                bme_data->air_quality,
+                bme_data->raw_gas);
         
         int msg_id = esp_mqtt_client_publish(mqtt_client, 
                                            "v1/devices/me/telemetry",
                                            message, 0, 1, 0);
         
         if (msg_id < 0) {
-            ESP_LOGE(TAG, "❌ Error publicando mensaje MQTT");
+            ESP_LOGE(TAG, "❌ Error publicando telemetría por MQTT");
         } else {
-            ESP_LOGI(TAG, "📤 Datos enviados: %s", message);
+            ESP_LOGI(TAG, "📤 Telemetría enviada - Lumin: %.2f, Temp: %.2f°C, Hum: %.1f%%", 
+                     luminosity, bme_data->temperature, bme_data->humidity);
         }
     } else {
         ESP_LOGW(TAG, "⚠️ MQTT no conectado, no se pueden enviar datos");
