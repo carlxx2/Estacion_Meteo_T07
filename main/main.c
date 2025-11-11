@@ -45,10 +45,10 @@ void app_main(void) {
         init_sensors();
         
         // 7. VERIFICAR ACTUALIZACIONES OTA
-        ESP_LOGI(TAG, "🔍 Verificando OTA...");
-        check_ota_updates();
+        //ESP_LOGI(TAG, "🔍 Verificando OTA...");
+        //check_ota_updates();
         
-        ESP_LOGI(TAG, "✅ Sistema operativo en modo STA");
+        //ESP_LOGI(TAG, "✅ Sistema operativo en modo STA");
         
     } else {
         ESP_LOGW(TAG, "📡 Modo AP - Servidor de configuración activo");
@@ -61,48 +61,45 @@ void app_main(void) {
     }
     
     // 8. LOOP PRINCIPAL
-int cycle_count = 0;
-    while (1) {
-        cycle_count++;
+	int cycle_count = 0;
+	while (1) {
+    	cycle_count++;
+    
+    	if (wifi_is_connected() && mqtt_is_connected()) {
+        	ESP_LOGI(TAG, "=== CICLO %d (STA) ===", cycle_count);
         
-        if (wifi_is_connected() && mqtt_is_connected()) {
-            // Modo STA: Leer sensores y enviar por MQTT
-            ESP_LOGI(TAG, "=== CICLO %d (STA) ===", cycle_count);
-            
-            // Leer LDR
-            float luminosity = read_ldr_value();
-            
-            // Leer BME680
-            bme680_data_t bme_data;
-            if (bme680_read_all_data(&bme_data) == ESP_OK) {
-                // ✅ ENVÍO ÚNICO CON TODOS LOS DATOS
-                send_mqtt_telemetry(luminosity, &bme_data);
-                
-                ESP_LOGI(TAG, "📊 Datos leídos - Lumin: %.2f, Temp: %.2f°C, Hum: %.1f%%, Gas: %luΩ", 
-                         luminosity, bme_data.temperature, bme_data.humidity, 
-                         (unsigned long)bme_data.gas_resistance);
-            }
-            
-        } else {
-            // Modo AP: Solo leer sensores (para I2C/local)
-            ESP_LOGI(TAG, "=== CICLO %d (AP) ===", cycle_count);
-            float luminosity = read_ldr_value();
-            
-            // Leer BME680 para mostrar datos localmente
-            bme680_data_t bme_data;
-            if (bme680_read_all_data(&bme_data) == ESP_OK) {
-                ESP_LOGI(TAG, "📊 BME680 - Temp: %.2f°C, Hum: %.1f%%, Pres: %.2fhPa, Gas: %luΩ", 
-                         bme_data.temperature, bme_data.humidity, bme_data.pressure, 
-                         (unsigned long)bme_data.gas_resistance);
-            }
-            
-            // Intentar reconectar MQTT si WiFi está disponible
-            if (wifi_is_connected() && !mqtt_is_connected()) {
-                ESP_LOGW(TAG, "🔄 Intentando reconectar MQTT...");
-                mqtt_init();
-            }
+        	// Leer LDR (maneja sensores desconectados)
+        	float luminosity = read_ldr_value();
+        
+        	// Leer BME680 - SIEMPRE intentar leer, incluso si falla
+        	bme680_data_t bme_data;
+        	esp_err_t bme_result = bme680_read_all_data(&bme_data);
+        
+        	// ✅ ENVIAR SIEMPRE, incluso si el sensor falla
+        	send_mqtt_telemetry(luminosity, &bme_data);
+        
+        	// Log apropiado según el resultado
+        	if (bme_result == ESP_OK) {
+           		ESP_LOGI(TAG, "📊 BME680 OK - Temp: %.2f°C, Hum: %.1f%%", 
+                     bme_data.temperature, bme_data.humidity);
+        	} else {
+            	ESP_LOGW(TAG, "📊 BME680 FALLIDO - Enviando valores de error");
         }
         
-        vTaskDelay(10000 / portTICK_PERIOD_MS); // 10 segundos entre ciclos
+    	} else {
+        	// Modo AP
+        	ESP_LOGI(TAG, "=== CICLO %d (AP) ===", cycle_count);
+        	float luminosity = read_ldr_value();
+        
+        	// En modo AP también verificar BME680
+        	bme680_data_t bme_data;
+        	if (bme680_read_all_data(&bme_data) == ESP_OK) {
+            	ESP_LOGI(TAG, "📊 BME680 - Temp: %.2f°C", bme_data.temperature);
+        	} else {
+           	ESP_LOGW(TAG, "⚠️ BME680 no disponible en modo AP");
+       	 }
     }
+    
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
+}
 }

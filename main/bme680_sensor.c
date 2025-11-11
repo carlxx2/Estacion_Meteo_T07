@@ -283,38 +283,113 @@ esp_err_t bme680_configure_sensor(void) {
     return ESP_OK;
 }
 
-// ==================== LECTURA DE TODOS LOS DATOS ====================
+// ==================== LECTURA ROBUSTA DE TODOS LOS DATOS ====================
 esp_err_t bme680_read_all_data(bme680_data_t *sensor_data) {
+    // Verificar si el sensor está conectado
+    if (!bme680_is_connected()) {
+        ESP_LOGW(TAG, "⚠️ BME680 no detectado. Retornando valores por defecto.");
+        
+        // Inicializar estructura con valores por defecto/error
+        sensor_data->temperature = -999.0f;     // Valor de error reconocible
+        sensor_data->humidity = -1.0f;          // Valor inválido
+        sensor_data->pressure = -1.0f;          // Valor inválido  
+        sensor_data->gas_resistance = 0;
+        sensor_data->air_quality = 0.0f;
+        sensor_data->raw_gas = 0;
+        
+        return ESP_ERR_NOT_FOUND;
+    }
+    
     uint8_t sensor_data_raw[15];
     uint8_t gas_range;
     
-    // Leer todos los datos del sensor
+    // Leer todos los datos del sensor (registros 0x1D a 0x2B)
     esp_err_t ret = bme680_read_bytes(0x1D, sensor_data_raw, 15);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "❌ Error leyendo datos del sensor");
+        ESP_LOGE(TAG, "❌ Error leyendo datos del sensor: %s", esp_err_to_name(ret));
+        
+        // Retornar valores de error pero permitir el envío
+        sensor_data->temperature = -999.0f;
+        sensor_data->humidity = -1.0f;
+        sensor_data->pressure = -1.0f;
+        sensor_data->gas_resistance = 0;
+        sensor_data->air_quality = 0.0f;
+        sensor_data->raw_gas = 0;
+        
         return ret;
     }
     
-    // Extraer valores ADC
+    // Extraer valores ADC de los datos brutos
     uint32_t temp_adc = (uint32_t)((sensor_data_raw[5] << 12) | (sensor_data_raw[6] << 4) | (sensor_data_raw[7] >> 4));
     uint32_t press_adc = (uint32_t)((sensor_data_raw[2] << 12) | (sensor_data_raw[3] << 4) | (sensor_data_raw[4] >> 4));
     uint16_t hum_adc = (uint16_t)((sensor_data_raw[8] << 8) | sensor_data_raw[9]);
     uint16_t gas_adc = (uint16_t)((sensor_data_raw[13] << 2) | (sensor_data_raw[14] >> 6));
     gas_range = sensor_data_raw[14] & 0x0F;
     
-    // Compensar valores
-    sensor_data->temperature = bme680_compensate_temperature(temp_adc);
-    sensor_data->pressure = bme680_compensate_pressure(press_adc);
-    sensor_data->humidity = bme680_compensate_humidity(hum_adc);
-    sensor_data->gas_resistance = bme680_compensate_gas(gas_adc, gas_range);
+    // Verificar si los valores ADC son razonables (evitar valores extremos por hardware defectuoso)
+    if (temp_adc == 0 || temp_adc > 0xFFFFF) { // 20-bit max value
+        ESP_LOGW(TAG, "⚠️ Valor ADC de temperatura fuera de rango: %lu", (unsigned long)temp_adc);
+        sensor_data->temperature = -999.0f;
+    } else {
+        // Compensar temperatura
+        sensor_data->temperature = bme680_compensate_temperature(temp_adc);
+    }
+    
+    if (press_adc == 0 || press_adc > 0xFFFFF) {
+        ESP_LOGW(TAG, "⚠️ Valor ADC de presión fuera de rango: %lu", (unsigned long)press_adc);
+        sensor_data->pressure = -1.0f;
+    } else {
+        // Compensar presión
+        sensor_data->pressure = bme680_compensate_pressure(press_adc);
+    }
+    
+    if (hum_adc == 0 || hum_adc > 0xFFFF) {
+        ESP_LOGW(TAG, "⚠️ Valor ADC de humedad fuera de rango: %u", hum_adc);
+        sensor_data->humidity = -1.0f;
+    } else {
+        // Compensar humedad
+        sensor_data->humidity = bme680_compensate_humidity(hum_adc);
+    }
+    
+    // Procesar datos de gas
     sensor_data->raw_gas = gas_adc;
-    sensor_data->air_quality = bme680_calculate_air_quality(sensor_data->gas_resistance, sensor_data->humidity);
+    if (gas_adc > 0) {
+        sensor_data->gas_resistance = bme680_compensate_gas(gas_adc, gas_range);
+        sensor_data->air_quality = bme680_calculate_air_quality(sensor_data->gas_resistance, sensor_data->humidity);
+    } else {
+        sensor_data->gas_resistance = 0;
+        sensor_data->air_quality = 0.0f;
+        ESP_LOGD(TAG, "🔇 Sensor de gas no activo o sin datos");
+    }
     
-    // Guardar última lectura
-    last_sensor_data = *sensor_data;
+    // Validar rangos razonables de los datos compensados
+    if (sensor_data->temperature < -40.0f || sensor_data->temperature > 85.0f) {
+        ESP_LOGW(TAG, "⚠️ Temperatura fuera de rango operativo: %.2f", sensor_data->temperature);
+    }
     
-    // Reiniciar medición
-    ESP_ERROR_CHECK(bme680_write_byte(0x74, 0x93));
+    if (sensor_data->humidity >= 0.0f && (sensor_data->humidity < 0.0f || sensor_data->humidity > 100.0f)) {
+        ESP_LOGW(TAG, "⚠️ Humedad fuera de rango: %.2f", sensor_data->humidity);
+        if (sensor_data->humidity > 100.0f) sensor_data->humidity = 100.0f;
+        if (sensor_data->humidity < 0.0f) sensor_data->humidity = 0.0f;
+    }
+    
+    if (sensor_data->pressure >= 0.0f && (sensor_data->pressure < 300.0f || sensor_data->pressure > 1100.0f)) {
+        ESP_LOGW(TAG, "⚠️ Presión fuera de rango: %.2f", sensor_data->pressure);
+    }
+    
+    // Guardar última lectura válida
+    if (sensor_data->temperature > -100.0f) { // Si no es valor de error
+        last_sensor_data = *sensor_data;
+    }
+    
+    // Reiniciar medición para siguiente lectura
+    esp_err_t write_ret = bme680_write_byte(0x74, 0x93); // Temp x2, Pres x4, Modo Normal
+    if (write_ret != ESP_OK) {
+        ESP_LOGW(TAG, "⚠️ Error reiniciando medición: %s", esp_err_to_name(write_ret));
+    }
+    
+    ESP_LOGD(TAG, "📊 Datos BME680 procesados - Temp: %.2f°C, Hum: %.2f%%, Pres: %.2fhPa", 
+             sensor_data->temperature, sensor_data->humidity, sensor_data->pressure);
     
     return ESP_OK;
 }
@@ -323,7 +398,18 @@ esp_err_t bme680_read_all_data(bme680_data_t *sensor_data) {
 bool bme680_is_connected(void) {
     uint8_t chip_id;
     esp_err_t ret = bme680_read_bytes(0xD0, &chip_id, 1);
-    return (ret == ESP_OK && chip_id == 0x61);
+    
+    if (ret != ESP_OK) {
+        ESP_LOGD(TAG, "🔌 BME680 no responde: %s", esp_err_to_name(ret));
+        return false;
+    }
+    
+    if (chip_id != 0x61) {
+        ESP_LOGD(TAG, "🔌 Chip ID incorrecto: 0x%02X (esperado: 0x61)", chip_id);
+        return false;
+    }
+    
+    return true;
 }
 
 // ==================== TAREA DE LECTURA CONTINUA ====================
