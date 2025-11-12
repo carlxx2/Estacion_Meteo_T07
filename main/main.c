@@ -25,7 +25,7 @@ void app_main(void) {
     	ESP_LOGI(TAG, "📊 Lectura inicial BME680:");
     	ESP_LOGI(TAG, "  🌡️  Temperatura: %.2f°C", sensor_data.temperature);
     	ESP_LOGI(TAG, "  💧 Humedad: %.1f%%", sensor_data.humidity);
-    	ESP_LOGI(TAG, "  📊 Presión: %.2f hPa", sensor_data.pressure);
+    	ESP_LOGI(TAG, "  📊 Presion: %.2f hPa", sensor_data.pressure);
     	ESP_LOGI(TAG, "  🌫️  Gas: %lu Ω", (unsigned long)sensor_data.gas_resistance);  // ✅ CORREGIDO
     	ESP_LOGI(TAG, "  🎯 Calidad Aire: %.1f/100", sensor_data.air_quality);
 	}
@@ -89,7 +89,7 @@ void app_main(void) {
     	} else {
         	// Modo AP
         	ESP_LOGI(TAG, "=== CICLO %d (AP) ===", cycle_count);
-        	float luminosity = read_ldr_value();
+        	read_ldr_value();
         
         	// En modo AP también verificar BME680
         	bme680_data_t bme_data;

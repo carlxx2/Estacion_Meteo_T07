@@ -48,7 +48,7 @@
 #define I2C_MASTER_SDA_IO 21
 #define I2C_MASTER_SCL_IO 22
 #define I2C_MASTER_FREQ_HZ 100000
-#define BME680_ADDR 0x76
+#define BME680_ADDR 0x77
 // =============================================================================
 // ESTRUCTURAS DE DATOS
 // =============================================================================
@@ -100,7 +100,6 @@ esp_err_t bme680_read_all_data(bme680_data_t *sensor_data);
 bool bme680_is_connected(void);
 void bme680_start_reading_task(void);
 esp_err_t bme680_configure_sensor(void);
-
 
 
 #endif
