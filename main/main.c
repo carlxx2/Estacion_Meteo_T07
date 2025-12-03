@@ -17,7 +17,6 @@ void app_main(void) {
     // 2. INICIALIZAR BME680
     
     bme680_init();
-    i2c_diagnostic();
     if (bme680_configure_sensor() == ESP_OK) {
         ESP_LOGI(TAG, "✅ BME680 inicializado correctamente");
         
@@ -102,6 +101,6 @@ void app_main(void) {
        	 }
     }
     
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
 }

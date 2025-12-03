@@ -347,7 +347,10 @@ esp_err_t bme680_apply_config(bme680_config_t *config) {
 // ==================== LECTURA DE CALIBRACIÓN (TU CÓDIGO) ====================
 
 static esp_err_t bme680_read_calibration_data(void) {
+	ESP_LOGI(TAG, "📖 Iniciando lectura de calibración...");
     uint8_t calib_data_raw[41];
+    
+    
     
     // Leer bloques de calibración
     ESP_ERROR_CHECK(bme680_read_bytes(0x89, calib_data_raw, 25));
@@ -385,11 +388,19 @@ static esp_err_t bme680_read_calibration_data(void) {
     bme680_dev.calib.par_gh3 = (int8_t)calib_data_raw[38];
     bme680_dev.calib.par_gh4 = (int8_t)calib_data_raw[39];
     
-    ESP_LOGI(TAG, "📊 Calibración BME680 leída correctamente");
-    ESP_LOGI(TAG, "  Temp: T1=%u, T2=%d, T3=%d", 
-             bme680_dev.calib.par_t1, bme680_dev.calib.par_t2, bme680_dev.calib.par_t3);
-    ESP_LOGI(TAG, "  Hum: H1=%u, H2=%u, H3=%d", 
-             bme680_dev.calib.par_h1, bme680_dev.calib.par_h2, bme680_dev.calib.par_h3);
+    ESP_LOGI(TAG, "=== CALIBRACIÓN LEÍDA ===");
+	ESP_LOGI(TAG, "Temp - T1: %u, T2: %d, T3: %d", 
+         bme680_dev.calib.par_t1, 
+         bme680_dev.calib.par_t2, 
+         bme680_dev.calib.par_t3);
+	ESP_LOGI(TAG, "Pres - P1: %u, P2: %d, P3: %d", 
+         bme680_dev.calib.par_p1, 
+         bme680_dev.calib.par_p2, 
+         bme680_dev.calib.par_p3);
+	ESP_LOGI(TAG, "Hum - H1: %u, H2: %u, H3: %d", 
+         bme680_dev.calib.par_h1, 
+         bme680_dev.calib.par_h2, 
+         bme680_dev.calib.par_h3);
     
     return ESP_OK;
 }
@@ -400,12 +411,17 @@ static float bme680_compensate_temperature(uint32_t temp_adc) {
     float var1, var2, var3;
     float calc_temp;
     
-    // Algoritmo corregido del datasheet BME680
+    // Algoritmo DEL DATASHEET BME680 (revisión 1.0)
     var1 = ((float)temp_adc / 16384.0 - ((float)bme680_dev.calib.par_t1 / 1024.0));
-    var2 = (var1 * (float)bme680_dev.calib.par_t2);
+    var2 = var1 * ((float)bme680_dev.calib.par_t2);
     var3 = (var1 * var1) * ((float)bme680_dev.calib.par_t3 * 16.0);
-    bme680_dev.calib.t_fine = (var2 + var3);
-    calc_temp = ((bme680_dev.calib.t_fine) / 5120.0);
+    
+    bme680_dev.calib.t_fine = var2 + var3;
+    calc_temp = bme680_dev.calib.t_fine / 5120.0;
+    
+    // DEBUG
+    ESP_LOGI(TAG, "🔧 Compensación T - var1: %.6f, var2: %.6f, var3: %.6f, t_fine: %.6f",
+             var1, var2, var3, bme680_dev.calib.t_fine);
     
     return calc_temp;
 }
@@ -510,7 +526,12 @@ esp_err_t bme680_configure_sensor(void) {
     ESP_LOGI(TAG, "✅ Chip ID correcto: 0x%02X", chip_id);
     
     // Leer datos de calibración
-    ESP_ERROR_CHECK(bme680_read_calibration_data());
+    ESP_LOGI(TAG, "📖 Leyendo datos de calibración...");
+    ret = bme680_read_calibration_data();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error leyendo calibración: %s", esp_err_to_name(ret));
+        return ret;
+    }
     
     // ⚠️ CORRECCIÓN: Marcar como inicializado ANTES de aplicar configuración
     bme680_dev.initialized = true;
@@ -527,6 +548,7 @@ esp_err_t bme680_configure_sensor(void) {
     };
     
     // Aplicar configuración
+    ESP_LOGI(TAG, "⚙️ Aplicando configuración por defecto...");
     ESP_ERROR_CHECK(bme680_apply_config(&default_config));
     
     ESP_LOGI(TAG, "⚙️ Sensor BME680 configurado completamente");
@@ -586,8 +608,13 @@ esp_err_t bme680_read_all_data(bme680_data_t *sensor_data) {
         ESP_LOGW(TAG, "⚠️ Valor ADC de temperatura fuera de rango: %lu", (unsigned long)temp_adc);
         sensor_data->temperature = -999.0f;
     } else {
-        sensor_data->temperature = bme680_compensate_temperature(temp_adc);
-        sensor_data->temperature = sensor_data->temperature - 35.0f; // ← OFFSET FIJO
+        // Después de extraer temp_adc:
+		ESP_LOGI(TAG, "🌡️ ADC crudo temperatura: %lu (0x%06lX)", 
+         (unsigned long)temp_adc, (unsigned long)temp_adc);
+
+		float raw_temp = bme680_compensate_temperature(temp_adc);
+		ESP_LOGI(TAG, "🌡️ Temperatura compensada: %.2f°C", raw_temp);
+		sensor_data->temperature = raw_temp;  // Sin restar 80
     }
     
     if (press_adc == 0 || press_adc > 0xFFFFF) {
@@ -694,7 +721,7 @@ void bme680_init(void) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     
     // Ejecutar diagnóstico completo (opcional)
-    // i2c_diagnostic();
+    i2c_diagnostic();
     
     // Intentar configurar sensor
     if (bme680_is_connected()) {
