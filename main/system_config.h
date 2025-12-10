@@ -34,7 +34,10 @@
 #define THINGSBOARD_MQTT_URI "mqtt://demo.thingsboard.io"
 #define THINGSBOARD_ACCESS_TOKEN "om8tccnqiv43ukzaprgp"
 #define GITHUB_FIRMWARE_URL "https://raw.githubusercontent.com/carlxx2/Estacion_Meteo_T07/main/firmware/firmware.bin"
-#define LDR_ADC_CHANNEL    ADC1_CHANNEL_4
+
+// ==================== CONFIGURACIÓN ADC ====================
+#define PLUVIOMETRO_ADC_CHANNEL    ADC1_CHANNEL_4   // GPIO32
+#define ANEMOMETRO_ADC_CHANNEL     ADC1_CHANNEL_5   // GPIO33
 
 // =============================================================================
 // CONFIGURACIÓN BME680 - MEJORADA
@@ -90,7 +93,8 @@ typedef struct {
 
 // Estructura para datos del sistema
 typedef struct {
-    float luminosity;
+    float rainfall_mm;
+    float wind_speed_ms;
     bme680_data_t bme680;
     bool wifi_connected;
     bool ap_mode;
@@ -108,16 +112,17 @@ const char* wifi_get_ap_ssid(void);
 
 // MQTT Client (sin cambios)
 void mqtt_init(void);
-void send_mqtt_telemetry(float luminosity, bme680_data_t *bme_data);
+void send_mqtt_telemetry(bme680_data_t *bme_data, float rainfall_mm, float wind_speed_ms);
 bool mqtt_is_connected(void);
 
 // OTA Updater (sin cambios)
 void check_ota_updates(void);
 void verify_github_url(void);
 
-// Sensor Reader (sin cambios)
+// Sensor Reader (actualizada sin LDR)
 void init_sensors(void);
-float read_ldr_value(void);
+float read_pluviometro_value(void);
+float read_anemometro_value(void);
 
 // BME680 Sensor - FUNCIONES MEJORADAS
 void bme680_init(void);
