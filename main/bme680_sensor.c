@@ -613,9 +613,9 @@ esp_err_t bme680_read_all_data(bme680_data_t *sensor_data) {
          (unsigned long)temp_adc, (unsigned long)temp_adc);
 
 		float raw_temp = bme680_compensate_temperature(temp_adc);
-		ESP_LOGI(TAG, "🌡️ Temperatura compensada: %.2f°C", raw_temp);
-		sensor_data->temperature = raw_temp;  // Sin restar 80
-    }
+		float calibrated_temp = (raw_temp * BME680_TEMP_SCALE) + BME680_TEMP_OFFSET_C;
+		ESP_LOGI(TAG, "🌡️ Temperatura compensada: %.2f°C (calibrada: %.2f°C)", raw_temp, calibrated_temp);
+		sensor_data->temperature = calibrated_temp;
     
     if (press_adc == 0 || press_adc > 0xFFFFF) {
         ESP_LOGW(TAG, "⚠️ Valor ADC de presión fuera de rango: %lu", (unsigned long)press_adc);
@@ -629,6 +629,8 @@ esp_err_t bme680_read_all_data(bme680_data_t *sensor_data) {
         sensor_data->humidity = -1.0f;
     } else {
         sensor_data->humidity = bme680_compensate_humidity(hum_adc);
+		float raw_humidity = bme680_compensate_humidity(hum_adc);
+        sensor_data->humidity = (raw_humidity * BME680_HUM_SCALE) + BME680_HUM_OFFSET_PCT;
     }
     
     // Procesar datos de gas
