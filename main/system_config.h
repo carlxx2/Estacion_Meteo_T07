@@ -1,29 +1,3 @@
-// system_config.h - AGREGAR NUEVAS DEFINICIONES
-#ifndef SYSTEM_CONFIG_H
-#define SYSTEM_CONFIG_H
-
-#include <stdio.h>
-#include <stdbool.h>
-#include <unistd.h>
-#include <inttypes.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/event_groups.h"
-#include "esp_system.h"
-#include "esp_event.h"
-#include "esp_log.h"
-#include "esp_ota_ops.h"
-#include "esp_http_client.h"
-#include "esp_https_ota.h"
-#include "esp_netif.h"
-#include "esp_wifi.h"
-#include "nvs_flash.h"
-#include "mqtt_client.h"
-#include "driver/adc.h"
-#include "esp_crt_bundle.h"
-#include "esp_mac.h"
-#include "driver/i2c.h"
-
 // =============================================================================
 // CONFIGURACIÓN - ¡ACTUALIZA CON TUS DATOS REALES!
 // =============================================================================
@@ -47,6 +21,12 @@
 #define I2C_MASTER_SCL_IO 22
 #define I2C_MASTER_FREQ_HZ 100000
 #define BME680_ADDR 0x77
+
+// Calibración lineal (ajusta según tus mediciones de referencia)
+#define BME680_TEMP_SCALE 1.0f
+#define BME680_TEMP_OFFSET_C 0.0f
+#define BME680_HUM_SCALE 1.0f
+#define BME680_HUM_OFFSET_PCT 0.0f
 
 // Modos de operación (de gschorcht)
 typedef enum {
@@ -73,48 +53,7 @@ typedef enum {
 // Estructura para datos del sensor BME680 (manteniendo tu formato)
 typedef struct {
     float temperature;
-    float humidity;
-    float pressure;
-    uint32_t gas_resistance;
-    float air_quality;
-    int raw_gas;
-} bme680_data_t;
-
-// Nueva estructura de configuración (de gschorcht)
-typedef struct {
-    bme680_osr_t osr_temperature;
-    bme680_osr_t osr_pressure;
-    bme680_osr_t osr_humidity;
-    bme680_mode_t operation_mode;
-    uint16_t heater_temperature;
-    uint16_t heater_duration;
-    int16_t ambient_temperature;
-} bme680_config_t;
-
-// Estructura para datos del sistema
-typedef struct {
-    float rainfall_mm;
-    float wind_speed_ms;
-    bme680_data_t bme680;
-    bool wifi_connected;
-    bool ap_mode;
-} system_data_t;
-
-// =============================================================================
-// DECLARACIONES DE FUNCIONES - MEJORADAS
-// =============================================================================
-
-// WiFi Manager (sin cambios)
-void wifi_init_sta(void);
-bool wifi_is_connected(void);
-bool wifi_is_ap_mode(void);
-const char* wifi_get_ap_ssid(void);
-
-// MQTT Client (sin cambios)
-void mqtt_init(void);
-void send_mqtt_telemetry(bme680_data_t *bme_data, float rainfall_mm, float wind_speed_ms);
-bool mqtt_is_connected(void);
-
+@@ -118,26 +124,26 @@ bool mqtt_is_connected(void);
 // OTA Updater (sin cambios)
 void check_ota_updates(void);
 void verify_github_url(void);
@@ -139,5 +78,3 @@ esp_err_t bme680_set_operation_mode(bme680_mode_t mode);
 esp_err_t bme680_set_ambient_temperature(int16_t temperature);
 bme680_mode_t bme680_get_operation_mode(void);
 esp_err_t bme680_apply_config(bme680_config_t *config);
-
-#endif
