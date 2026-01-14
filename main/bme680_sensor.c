@@ -222,15 +222,28 @@ esp_err_t bme680_set_heater_profile(uint16_t temperature, uint16_t duration) {
     bme680_dev.heater_temp = temperature;
     bme680_dev.heater_duration = duration;
     
-    // Configurar temperatura del calentador
-    uint8_t res_heat = 0x00; // Deberías calcular esto correctamente según el datasheet
-    ESP_ERROR_CHECK(bme680_write_byte(0x5A, res_heat));
+    // Cálculo de resistencia del heater (algoritmo de gschorcht)
+    int32_t var1, var2, var3, var4, var5, heatr_res;
     
-    // Configurar duración
-    uint8_t gas_wait = duration / 10; // Convertir a unidades de 10ms
-    ESP_ERROR_CHECK(bme680_write_byte(0x64, gas_wait));
+    var1 = (((int32_t)bme680_dev.ambient_temp * bme680_dev.calib.par_gh3) / 1000) * 256;
+    var2 = (bme680_dev.calib.par_gh1 + 784) * (((((bme680_dev.calib.par_gh2 + 154009) * temperature * 5) / 100) + 3276800) / 10);
+    var3 = var1 + (var2 / 2);
+    var4 = (var3 / (bme680_dev.calib.par_gh4 + 4));
+    var5 = (131 * bme680_dev.calib.par_gh1) + 65536;
+    heatr_res = (int32_t)((var4 / var5) - 250);
     
-    ESP_LOGI(TAG, "🔥 Heater configurado: Temp=%d°C, Duración=%dms", temperature, duration);
+    if (heatr_res < 0) heatr_res = 0;
+    if (heatr_res > 255) heatr_res = 255;
+    
+    // Configurar resistencia y duración
+    ESP_ERROR_CHECK(bme680_write_byte(0x5A, (uint8_t)heatr_res));
+    ESP_ERROR_CHECK(bme680_write_byte(0x64, (uint8_t)duration));
+    
+    // Habilitar gas sensor
+    ESP_ERROR_CHECK(bme680_write_byte(0x71, 0x10 | 0)); // enable gas, profile 0
+    
+    ESP_LOGI(TAG, "🔥 Heater configurado: %d°C por %dms (Resistencia: %"PRId32")", 
+            temperature, duration, heatr_res);
     
     return ESP_OK;
 }
@@ -243,11 +256,16 @@ esp_err_t bme680_set_operation_mode(bme680_mode_t mode) {
     
     bme680_dev.mode = mode;
     
-    uint8_t ctrl_meas = ((bme680_dev.osr_t & 0x07) << 5) | 
-                        ((bme680_dev.osr_p & 0x07) << 2) | 
-                        (mode & 0x03);
+    uint8_t ctrl_meas;
+    ESP_ERROR_CHECK(bme680_read_bytes(0x74, &ctrl_meas, 1));
+    
+    ctrl_meas &= ~0x03;
+    ctrl_meas |= (mode & 0x03);
     
     ESP_ERROR_CHECK(bme680_write_byte(0x74, ctrl_meas));
+    
+    const char* mode_str[] = {"SLEEP", "FORCED", "PARALLEL", "NORMAL"};
+    ESP_LOGI(TAG, "🔄 Modo de operación: %s", mode_str[mode]);
     
     return ESP_OK;
 }
@@ -259,205 +277,285 @@ esp_err_t bme680_set_ambient_temperature(int16_t temperature) {
     }
     
     bme680_dev.ambient_temp = temperature;
-    
     ESP_LOGI(TAG, "🌡️ Temperatura ambiente configurada: %d°C", temperature);
-    
     return ESP_OK;
 }
 
 bme680_mode_t bme680_get_operation_mode(void) {
-    return bme680_dev.mode;
+    if (!bme680_dev.initialized) {
+        return BME680_SLEEP_MODE;
+    }
+    
+    uint8_t ctrl_meas;
+    if (bme680_read_bytes(0x74, &ctrl_meas, 1) != ESP_OK) {
+        return BME680_SLEEP_MODE;
+    }
+    
+    return (bme680_mode_t)(ctrl_meas & 0x03);
 }
 
 esp_err_t bme680_apply_config(bme680_config_t *config) {
-    if (!config) return ESP_ERR_INVALID_ARG;
+    if (!config) {
+        ESP_LOGE(TAG, "Configuración inválida");
+        return ESP_ERR_INVALID_ARG;
+    }
     
-    ESP_ERROR_CHECK(bme680_set_oversampling_rates(config->osr_temperature, 
-                                                  config->osr_pressure, 
-                                                  config->osr_humidity));
-    ESP_ERROR_CHECK(bme680_set_heater_profile(config->heater_temperature, 
-                                              config->heater_duration));
-    ESP_ERROR_CHECK(bme680_set_operation_mode(config->operation_mode));
-    ESP_ERROR_CHECK(bme680_set_ambient_temperature(config->ambient_temperature));
+    if (!bme680_dev.initialized) {
+        ESP_LOGE(TAG, "❌ BME680 no inicializado - Llama a bme680_configure_sensor() primero");
+        return ESP_FAIL;
+    }
     
+    ESP_LOGI(TAG, "🎛️ Aplicando configuración BME680...");
+    
+    esp_err_t ret;
+    
+    // Aplicar oversampling
+    ret = bme680_set_oversampling_rates(config->osr_temperature, 
+                                       config->osr_pressure, 
+                                       config->osr_humidity);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error configurando oversampling: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // Aplicar heater
+    ret = bme680_set_heater_profile(config->heater_temperature, 
+                                   config->heater_duration);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error configurando heater: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // Aplicar temperatura ambiente
+    ret = bme680_set_ambient_temperature(config->ambient_temperature);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error configurando temp ambiente: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // Aplicar modo de operación
+    ret = bme680_set_operation_mode(config->operation_mode);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error configurando modo: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "✅ Configuración aplicada correctamente");
     return ESP_OK;
 }
 
-// ==================== FUNCIONES DE CALIBRACIÓN ====================
+// ==================== LECTURA DE CALIBRACIÓN (TU CÓDIGO) ====================
 
 static esp_err_t bme680_read_calibration_data(void) {
-    ESP_LOGI(TAG, "📖 Iniciando lectura de calibración...");
+	ESP_LOGI(TAG, "📖 Iniciando lectura de calibración...");
+    uint8_t calib_data_raw[41];
+    
+    
     
     // Leer bloques de calibración
-    uint8_t calib_data1[25];
-    uint8_t calib_data2[16];
-    
-    esp_err_t ret = bme680_read_bytes(0x89, calib_data1, 25);
-    if (ret != ESP_OK) return ret;
-    
-    ret = bme680_read_bytes(0xE1, calib_data2, 16);
-    if (ret != ESP_OK) return ret;
+    ESP_ERROR_CHECK(bme680_read_bytes(0x89, calib_data_raw, 25));
+    ESP_ERROR_CHECK(bme680_read_bytes(0xE1, calib_data_raw + 25, 16));
     
     // Parsear calibración temperatura
-    bme680_dev.calib.par_t1 = (uint16_t)(calib_data1[33 - 0x89] << 8 | calib_data1[32 - 0x89]);
-    bme680_dev.calib.par_t2 = (int16_t)(calib_data1[1] << 8 | calib_data1[0]);
-    bme680_dev.calib.par_t3 = (int8_t)calib_data1[2];
+    bme680_dev.calib.par_t1 = (calib_data_raw[33] << 8) | calib_data_raw[32];
+    bme680_dev.calib.par_t2 = (calib_data_raw[1] << 8) | calib_data_raw[0];
+    bme680_dev.calib.par_t3 = (int8_t)calib_data_raw[2];
     
     // Parsear calibración presión
-    bme680_dev.calib.par_p1 = (uint16_t)(calib_data1[5] << 8 | calib_data1[4]);
-    bme680_dev.calib.par_p2 = (int16_t)(calib_data1[7] << 8 | calib_data1[6]);
-    bme680_dev.calib.par_p3 = (int8_t)calib_data1[8];
-    bme680_dev.calib.par_p4 = (int16_t)(calib_data1[11] << 8 | calib_data1[10]);
-    bme680_dev.calib.par_p5 = (int16_t)(calib_data1[13] << 8 | calib_data1[12]);
-    bme680_dev.calib.par_p6 = (int8_t)calib_data1[15];
-    bme680_dev.calib.par_p7 = (int8_t)calib_data1[14];
-    bme680_dev.calib.par_p8 = (int16_t)(calib_data1[19] << 8 | calib_data1[18]);
-    bme680_dev.calib.par_p9 = (int16_t)(calib_data1[21] << 8 | calib_data1[20]);
-    bme680_dev.calib.par_p10 = calib_data1[22];
+    bme680_dev.calib.par_p1 = (calib_data_raw[6] << 8) | calib_data_raw[5];
+    bme680_dev.calib.par_p2 = (calib_data_raw[8] << 8) | calib_data_raw[7];
+    bme680_dev.calib.par_p3 = (int8_t)calib_data_raw[9];
+    bme680_dev.calib.par_p4 = (calib_data_raw[12] << 8) | calib_data_raw[11];
+    bme680_dev.calib.par_p5 = (calib_data_raw[14] << 8) | calib_data_raw[13];
+    bme680_dev.calib.par_p6 = (int8_t)calib_data_raw[16];
+    bme680_dev.calib.par_p7 = (int8_t)calib_data_raw[15];
+    bme680_dev.calib.par_p8 = (calib_data_raw[20] << 8) | calib_data_raw[19];
+    bme680_dev.calib.par_p9 = (calib_data_raw[22] << 8) | calib_data_raw[21];
+    bme680_dev.calib.par_p10 = calib_data_raw[23];
     
     // Parsear calibración humedad
-    bme680_dev.calib.par_h1 = (uint16_t)(((uint16_t)calib_data2[1] << 4) | (calib_data2[0] & 0x0F));
-    bme680_dev.calib.par_h2 = (uint16_t)(((uint16_t)calib_data2[2] << 4) | (calib_data2[1] >> 4));
-    bme680_dev.calib.par_h3 = (int8_t)calib_data2[3];
-    bme680_dev.calib.par_h4 = (int8_t)calib_data2[4];
-    bme680_dev.calib.par_h5 = (int8_t)calib_data2[5];
-    bme680_dev.calib.par_h6 = (uint8_t)calib_data2[6];
-    bme680_dev.calib.par_h7 = (int8_t)calib_data2[7];
+    bme680_dev.calib.par_h1 = (calib_data_raw[27] << 4) | (calib_data_raw[26] & 0x0F);
+    bme680_dev.calib.par_h2 = (calib_data_raw[25] << 4) | (calib_data_raw[26] >> 4);
+    bme680_dev.calib.par_h3 = (int8_t)calib_data_raw[28];
+    bme680_dev.calib.par_h4 = (int8_t)calib_data_raw[29];
+    bme680_dev.calib.par_h5 = (int8_t)calib_data_raw[30];
+    bme680_dev.calib.par_h6 = calib_data_raw[31];
+    bme680_dev.calib.par_h7 = (int8_t)calib_data_raw[34];
     
     // Parsear calibración gas
-    bme680_dev.calib.par_gh1 = (uint8_t)calib_data2[8];
-    bme680_dev.calib.par_gh2 = (int16_t)(calib_data2[10] << 8 | calib_data2[9]);
-    bme680_dev.calib.par_gh3 = (int8_t)calib_data2[11];
+    bme680_dev.calib.par_gh1 = calib_data_raw[35];
+    bme680_dev.calib.par_gh2 = (calib_data_raw[37] << 8) | calib_data_raw[36];
+    bme680_dev.calib.par_gh3 = (int8_t)calib_data_raw[38];
+    bme680_dev.calib.par_gh4 = (int8_t)calib_data_raw[39];
     
-    ESP_LOGI(TAG, "✅ Calibración leída correctamente");
+    ESP_LOGI(TAG, "=== CALIBRACIÓN LEÍDA ===");
+	ESP_LOGI(TAG, "Temp - T1: %u, T2: %d, T3: %d", 
+         bme680_dev.calib.par_t1, 
+         bme680_dev.calib.par_t2, 
+         bme680_dev.calib.par_t3);
+	ESP_LOGI(TAG, "Pres - P1: %u, P2: %d, P3: %d", 
+         bme680_dev.calib.par_p1, 
+         bme680_dev.calib.par_p2, 
+         bme680_dev.calib.par_p3);
+	ESP_LOGI(TAG, "Hum - H1: %u, H2: %u, H3: %d", 
+         bme680_dev.calib.par_h1, 
+         bme680_dev.calib.par_h2, 
+         bme680_dev.calib.par_h3);
     
     return ESP_OK;
 }
 
-static float bme680_compensate_temperature(uint32_t adc_temp) {
-    float var1 = ((float)adc_temp / 16384.0f - (float)bme680_dev.calib.par_t1 / 1024.0f) *
-                 (float)bme680_dev.calib.par_t2;
+// ==================== COMPENSACIÓN (TUS FUNCIONES) ====================
+
+static float bme680_compensate_temperature(uint32_t temp_adc) {
+    float var1, var2, var3;
+    float calc_temp;
     
-    float var2 = (((float)adc_temp / 131072.0f - (float)bme680_dev.calib.par_t1 / 8192.0f) *
-                  ((float)adc_temp / 131072.0f - (float)bme680_dev.calib.par_t1 / 8192.0f)) *
-                 ((float)bme680_dev.calib.par_t3 * 16.0f);
+    // Algoritmo DEL DATASHEET BME680 (revisión 1.0)
+    var1 = ((float)temp_adc / 16384.0 - ((float)bme680_dev.calib.par_t1 / 1024.0));
+    var2 = var1 * ((float)bme680_dev.calib.par_t2);
+    var3 = (var1 * var1) * ((float)bme680_dev.calib.par_t3 * 16.0);
     
-    bme680_dev.calib.t_fine = var1 + var2;
+    bme680_dev.calib.t_fine = var2 + var3;
+    calc_temp = bme680_dev.calib.t_fine / 5120.0;
     
-    return bme680_dev.calib.t_fine / 5120.0f;
+    // DEBUG
+    ESP_LOGI(TAG, "🔧 Compensación T - var1: %.6f, var2: %.6f, var3: %.6f, t_fine: %.6f",
+             var1, var2, var3, bme680_dev.calib.t_fine);
+    
+    return calc_temp;
 }
 
-static float bme680_compensate_pressure(uint32_t adc_press) {
-    float var1 = (bme680_dev.calib.t_fine / 2.0f) - 64000.0f;
-    float var2 = var1 * var1 * ((float)bme680_dev.calib.par_p6 / 131072.0f);
-    var2 = var2 + var1 * ((float)bme680_dev.calib.par_p5 * 2.0f);
-    var2 = (var2 / 4.0f) + ((float)bme680_dev.calib.par_p4 * 65536.0f);
-    var1 = (((float)bme680_dev.calib.par_p3 * var1 * var1 / 16384.0f) + 
-            ((float)bme680_dev.calib.par_p2 * var1)) / 524288.0f;
-    var1 = (1.0f + (var1 / 32768.0f)) * (float)bme680_dev.calib.par_p1;
+static float bme680_compensate_pressure(uint32_t press_adc) {
+    float var1, var2, var3, pressure;
     
-    if (var1 == 0.0f) return 0.0f; // Evitar división por cero
+    var1 = ((float)bme680_dev.calib.t_fine / 2.0) - 64000.0;
+    var2 = var1 * var1 * ((float)bme680_dev.calib.par_p6 / 131072.0);
+    var2 = var2 + (var1 * (float)bme680_dev.calib.par_p5 * 2.0);
+    var2 = (var2 / 4.0) + ((float)bme680_dev.calib.par_p4 * 65536.0);
+    var1 = (((float)bme680_dev.calib.par_p3 * var1 * var1) / 16384.0 + ((float)bme680_dev.calib.par_p2 * var1)) / 524288.0;
+    var1 = (1.0 + (var1 / 32768.0)) * (float)bme680_dev.calib.par_p1;
     
-    float pressure = 1048576.0f - (float)adc_press;
-    pressure = (pressure - (var2 / 4096.0f)) * 6250.0f / var1;
-    var1 = ((float)bme680_dev.calib.par_p9 * pressure * pressure) / 2147483648.0f;
-    var2 = pressure * ((float)bme680_dev.calib.par_p8 / 32768.0f);
+    if (var1 == 0.0) {
+        return 0.0;
+    }
     
-    pressure = pressure + (var1 + var2 + ((float)bme680_dev.calib.par_p7 * 128.0f)) / 16.0f;
+    pressure = 1048576.0 - (float)press_adc;
+    pressure = (pressure - (var2 / 4096.0)) * 6250.0 / var1;
+    var1 = ((float)bme680_dev.calib.par_p9 * pressure * pressure) / 2147483648.0;
+    var2 = pressure * ((float)bme680_dev.calib.par_p8 / 32768.0);
+    var3 = (pressure / 256.0) * (pressure / 256.0) * (pressure / 256.0) * (bme680_dev.calib.par_p10 / 131072.0);
     
-    return pressure / 100.0f; // Convertir a hPa
+    pressure = pressure + (var1 + var2 + var3 + ((float)bme680_dev.calib.par_p7 * 128.0)) / 16.0;
+    
+    return pressure / 100.0;
 }
 
-static float bme680_compensate_humidity(uint16_t adc_hum) {
-    float temp_comp = bme680_dev.calib.t_fine / 5120.0f;
+static float bme680_compensate_humidity(uint16_t hum_adc) {
+    float var1, var2, var3, var4, var5, temp_comp;
     
-    float var1 = (float)adc_hum - (((float)bme680_dev.calib.par_h1 * 16.0f) + 
-                                   ((float)bme680_dev.calib.par_h3 / 2.0f * temp_comp));
-    float var2 = var1 * ((float)bme680_dev.calib.par_h2 / 262144.0f * 
-                         (1.0f + ((float)bme680_dev.calib.par_h4 / 16384.0f * temp_comp) + 
-                          ((float)bme680_dev.calib.par_h5 / 1048576.0f * temp_comp * temp_comp)));
-    float var3 = (float)bme680_dev.calib.par_h6 / 16384.0f;
-    float var4 = (float)bme680_dev.calib.par_h7 / 2097152.0f;
+    temp_comp = ((float)bme680_dev.calib.t_fine) / 5120.0;
     
-    float humidity = var2 + (var3 + var4 * temp_comp) * var2 * var2;
+    var1 = (float)hum_adc - ((float)bme680_dev.calib.par_h1 * 16.0) + (((float)bme680_dev.calib.par_h3 / 2.0) * temp_comp);
+    var2 = var1 * ((float)bme680_dev.calib.par_h2 / 262144.0 * (1.0 + ((float)bme680_dev.calib.par_h4 / 16384.0 * temp_comp) + 
+            ((float)bme680_dev.calib.par_h5 / 1048576.0 * temp_comp * temp_comp)));
+    var3 = (float)bme680_dev.calib.par_h6 / 16384.0;
+    var4 = (float)bme680_dev.calib.par_h7 / 2097152.0;
+    var5 = var2 + (var3 + var4 * temp_comp) * var2 * var2;
     
-    if (humidity > 100.0f) humidity = 100.0f;
-    else if (humidity < 0.0f) humidity = 0.0f;
+    if (var5 > 100.0) var5 = 100.0;
+    if (var5 < 0.0) var5 = 0.0;
     
-    return humidity;
+    return var5;
 }
 
-static uint32_t bme680_compensate_gas(uint16_t adc_gas, uint8_t gas_range) {
-    // Implementación simplificada - requiere tablas de lookup del datasheet
-    uint32_t gas_resistance = adc_gas * 100; // Placeholder
-    return gas_resistance;
+static uint32_t bme680_compensate_gas(uint16_t gas_adc, uint8_t gas_range) {
+    float var1, var2, var3, gas_res;
+    const float lookup_k1_range[16] = {0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, -0.8, 0.0, 0.0, -0.2, -0.5, 0.0, -1.0, 0.0, 0.0};
+    const float lookup_k2_range[16] = {0.0, 0.0, 0.0, 0.0, 0.1, 0.7, 0.0, -0.8, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    
+    var1 = (1340.0 + 5.0 * (float)bme680_dev.calib.par_gh3) * (1.0 + (float)bme680_dev.calib.par_gh1 / 100.0);
+    var2 = var1 * (1.0 + ((float)gas_adc / 100.0));
+    var3 = 1.0 + ((float)bme680_dev.calib.par_gh2 / 100.0);
+    
+    gas_res = var2 * var3;
+    
+    // Aplicar compensación de rango
+    gas_res += lookup_k1_range[gas_range] * (1.0 - gas_res / 100.0);
+    gas_res += lookup_k2_range[gas_range] * (1.0 - gas_res / 100.0);
+    
+    return (uint32_t)gas_res;
 }
+
+// ==================== CALCULAR CALIDAD DEL AIRE (TU FUNCIÓN) ====================
 
 static float bme680_calculate_air_quality(uint32_t gas_resistance, float humidity) {
-    // Algoritmo simplificado para calidad del aire
-    if (gas_resistance == 0) return 0.0f;
+    float quality_score = 0.0;
     
-    float air_quality = (gas_resistance / 1000.0f) * (1.0f - (humidity / 100.0f));
-    if (air_quality < 0) air_quality = 0;
-    if (air_quality > 100) air_quality = 100;
+    if (gas_resistance > 0) {
+        quality_score = (gas_resistance / 50000.0) * 100.0;
+        
+        if (humidity < 30.0 || humidity > 70.0) {
+            quality_score *= 0.8;
+        }
+        
+        if (quality_score > 100.0) quality_score = 100.0;
+        if (quality_score < 0.0) quality_score = 0.0;
+    }
     
-    return air_quality;
+    return quality_score;
 }
 
-// ==================== INICIALIZACIÓN DEL SENSOR ====================
+// ==================== CONFIGURACIÓN MEJORADA ====================
 
-void bme680_init(void) {
-    ESP_LOGI(TAG, "🚀 Inicializando BME680...");
+esp_err_t bme680_configure_sensor(void) {
+    // Verificar chip ID
+    uint8_t chip_id;
+    esp_err_t ret = bme680_read_bytes(0xD0, &chip_id, 1);
     
-    // Inicializar I2C
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_MASTER_SDA_IO,
-        .scl_io_num = I2C_MASTER_SCL_IO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_MASTER_FREQ_HZ
-    };
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error comunicando con BME680");
+        return ESP_FAIL;
+    }
     
-    ESP_ERROR_CHECK(i2c_param_config(I2C_MASTER_NUM, &conf));
-    ESP_ERROR_CHECK(i2c_driver_install(I2C_MASTER_NUM, I2C_MODE_MASTER, 0, 0, 0));
+    if (chip_id != 0x61) {
+        ESP_LOGE(TAG, "❌ Chip ID incorrecto: 0x%02X. Esperado: 0x61", chip_id);
+        return ESP_FAIL;
+    }
     
-    // Diagnóstico I2C
-    i2c_diagnostic();
-    
-    // Resetear sensor
-    ESP_LOGI(TAG, "🔄 Reseteando BME680...");
-    ESP_ERROR_CHECK(bme680_write_byte(0xE0, 0xB6));
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+    ESP_LOGI(TAG, "✅ Chip ID correcto: 0x%02X", chip_id);
     
     // Leer datos de calibración
     ESP_LOGI(TAG, "📖 Leyendo datos de calibración...");
-    esp_err_t ret = bme680_read_calibration_data();
+    ret = bme680_read_calibration_data();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "❌ Error leyendo calibración: %s", esp_err_to_name(ret));
-        return;
+        return ret;
     }
     
+    // ⚠️ CORRECCIÓN: Marcar como inicializado ANTES de aplicar configuración
     bme680_dev.initialized = true;
     
-    // Configurar sensor
-    ESP_ERROR_CHECK(bme680_configure_sensor());
+    // Configuración por defecto mejorada
+    bme680_config_t default_config = {
+        .osr_temperature = BME680_OSR_2X,
+        .osr_pressure = BME680_OSR_4X,
+        .osr_humidity = BME680_OSR_2X,
+        .operation_mode = BME680_FORCED_MODE,
+        .heater_temperature = 100,
+        .heater_duration = 25,
+        .ambient_temperature = 25
+    };
     
-    ESP_LOGI(TAG, "✅ BME680 inicializado correctamente");
-}
-
-esp_err_t bme680_configure_sensor(void) {
-    // Configurar oversampling
-    ESP_ERROR_CHECK(bme680_set_oversampling_rates(bme680_dev.osr_t, bme680_dev.osr_p, bme680_dev.osr_h));
+    // Aplicar configuración
+    ESP_LOGI(TAG, "⚙️ Aplicando configuración por defecto...");
+    ESP_ERROR_CHECK(bme680_apply_config(&default_config));
     
-    // Configurar heater
-    ESP_ERROR_CHECK(bme680_set_heater_profile(bme680_dev.heater_temp, bme680_dev.heater_duration));
-    
-    // Configurar modo
-    ESP_ERROR_CHECK(bme680_set_operation_mode(bme680_dev.mode));
-    
+    ESP_LOGI(TAG, "⚙️ Sensor BME680 configurado completamente");
     return ESP_OK;
 }
+
+// ==================== LECTURA ROBUSTA DE TODOS LOS DATOS (TU CÓDIGO MEJORADO) ====================
 
 esp_err_t bme680_read_all_data(bme680_data_t *sensor_data) {
     // Verificar si el sensor está conectado
@@ -511,13 +609,12 @@ esp_err_t bme680_read_all_data(bme680_data_t *sensor_data) {
         sensor_data->temperature = -999.0f;
     } else {
         // Después de extraer temp_adc:
-        ESP_LOGI(TAG, "🌡️ ADC crudo temperatura: %lu (0x%06lX)", 
+		ESP_LOGI(TAG, "🌡️ ADC crudo temperatura: %lu (0x%06lX)", 
          (unsigned long)temp_adc, (unsigned long)temp_adc);
 
-        float raw_temp = bme680_compensate_temperature(temp_adc);
-        float calibrated_temp = (raw_temp * BME680_TEMP_SCALE) + BME680_TEMP_OFFSET_C;
-        ESP_LOGI(TAG, "🌡️ Temperatura compensada: %.2f°C (calibrada: %.2f°C)", raw_temp, calibrated_temp);
-        sensor_data->temperature = calibrated_temp;
+		float raw_temp = bme680_compensate_temperature(temp_adc);
+		float calibrated_temp = (raw_temp * BME680_TEMP_SCALE) + BME680_TEMP_OFFSET_C;
+		sensor_data->temperature = calibrated_temp;
     }
     
     if (press_adc == 0 || press_adc > 0xFFFFF) {
@@ -532,7 +629,7 @@ esp_err_t bme680_read_all_data(bme680_data_t *sensor_data) {
         sensor_data->humidity = -1.0f;
     } else {
         float raw_humidity = bme680_compensate_humidity(hum_adc);
-        sensor_data->humidity = (raw_humidity * BME680_HUM_SCALE) + BME680_HUM_OFFSET_PCT;
+		sensor_data->humidity = (raw_humidity * BME680_HUM_SCALE) + BME680_HUM_OFFSET_PCT;
     }
     
     // Procesar datos de gas
@@ -599,5 +696,252 @@ bool bme680_is_connected(void) {
     
     ESP_LOGI(TAG, "BME680 detectado en: 0x%02X, Chip ID: 0x%02X", 
              bme680_current_addr, chip_id);
+    return true;
+}
+
+// ==================== INICIALIZACIÓN I2C (TU CÓDIGO) ====================
+
+void bme680_init(void) {
+    ESP_LOGI(TAG, "Inicializando BME680...");
+    
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_MASTER_SDA_IO,
+        .scl_io_num = I2C_MASTER_SCL_IO,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+    };
+    
+    ESP_ERROR_CHECK(i2c_param_config(I2C_MASTER_NUM, &conf));
+    ESP_ERROR_CHECK(i2c_driver_install(I2C_MASTER_NUM, conf.mode, 0, 0, 0));
+    
+    ESP_LOGI(TAG, "I2C inicializado correctamente");
+    
+    // Pequeña pausa para estabilización
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    
+    // Ejecutar diagnóstico completo (opcional)
+    i2c_diagnostic();
+    
+    // Intentar configurar sensor
+    if (bme680_is_connected()) {
+        if (bme680_configure_sensor() == ESP_OK) {
+            ESP_LOGI(TAG, "BME680 inicializado y configurado en 0x%02X", bme680_current_addr);
+        } else {
+            ESP_LOGE(TAG, "Error configurando BME680");
+        }
+    } else {
+        ESP_LOGE(TAG, "BME680 no detectado después del diagnostico");
+    }
+}
+
+// ==================== TAREA DE LECTURA CONTINUA (TU CÓDIGO) ====================
+
+static void bme680_reading_task(void *pvParameters) {
+    bme680_data_t sensor_data;
+    
+    ESP_LOGI(TAG, "📈 Iniciando lecturas continuas BME680...");
+    
+    while(1) {
+        esp_err_t ret = bme680_read_all_data(&sensor_data);
+        
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "🌡️ BME680 - Temp: %.2f°C, Hum: %.1f%%, Pres: %.2fhPa, Gas: %"PRIu32"Ω, Calidad: %.1f/100", 
+                     sensor_data.temperature, sensor_data.humidity, sensor_data.pressure, 
+                     sensor_data.gas_resistance, sensor_data.air_quality);
+        } else {
+            ESP_LOGE(TAG, "❌ Error leyendo BME680: %s", esp_err_to_name(ret));
+        }
+        
+        // Esperar 5 segundos entre lecturas
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+    }
+}
+
+// ==================== INICIAR TAREA DE LECTURA (TU CÓDIGO) ====================
+
+void bme680_start_reading_task(void) {
+    xTaskCreate(bme680_reading_task, "bme680_task", 4096, NULL, 5, NULL);
+    ESP_LOGI(TAG, "🔄 Tarea de lectura BME680 iniciada");
+}
+
+// ==================== OBTENER ÚLTIMOS DATOS (TU CÓDIGO) ====================
+
+bme680_data_t* bme680_get_last_data(void) {
+    return &last_sensor_data;
+}
+
+// ==================== FUNCIÓN DE REINICIO SUAVE (NUEVA - de gschorcht) ====================
+
+esp_err_t bme680_soft_reset(void) {
+    ESP_LOGI(TAG, "🔄 Realizando reinicio suave del BME680...");
+    
+    // Enviar comando de reset
+    esp_err_t ret = bme680_write_byte(0xE0, 0xB6);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error en reinicio suave");
+        return ret;
+    }
+    
+    // Esperar a que el reinicio se complete
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    
+    // Verificar que el sensor responde
+    if (!bme680_is_connected()) {
+        ESP_LOGE(TAG, "❌ BME680 no responde después del reinicio");
+        return ESP_FAIL;
+    }
+    
+    // Reconfigurar el sensor
+    ret = bme680_configure_sensor();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error reconfigurando después del reinicio");
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "✅ Reinicio suave completado correctamente");
+    return ESP_OK;
+}
+
+// ==================== FUNCIÓN PARA CAMBIAR MODO DINÁMICAMENTE (NUEVA) ====================
+
+esp_err_t bme680_switch_to_normal_mode(void) {
+    ESP_LOGI(TAG, "🔄 Cambiando a modo NORMAL para lecturas continuas...");
+    
+    bme680_config_t normal_config = {
+        .osr_temperature = bme680_dev.osr_t,
+        .osr_pressure = bme680_dev.osr_p,
+        .osr_humidity = bme680_dev.osr_h,
+        .operation_mode = BME680_NORMAL_MODE,
+        .heater_temperature = bme680_dev.heater_temp,
+        .heater_duration = bme680_dev.heater_duration,
+        .ambient_temperature = bme680_dev.ambient_temp
+    };
+    
+    return bme680_apply_config(&normal_config);
+}
+
+esp_err_t bme680_switch_to_forced_mode(void) {
+    ESP_LOGI(TAG, "🔄 Cambiando a modo FORCED para lecturas bajo demanda...");
+    
+    bme680_config_t forced_config = {
+        .osr_temperature = bme680_dev.osr_t,
+        .osr_pressure = bme680_dev.osr_p,
+        .osr_humidity = bme680_dev.osr_h,
+        .operation_mode = BME680_FORCED_MODE,
+        .heater_temperature = bme680_dev.heater_temp,
+        .heater_duration = bme680_dev.heater_duration,
+        .ambient_temperature = bme680_dev.ambient_temp
+    };
+    
+    return bme680_apply_config(&forced_config);
+}
+
+// ==================== FUNCIÓN DE ESTADO DEL SENSOR (NUEVA) ====================
+
+void bme680_print_status(void) {
+    if (!bme680_dev.initialized) {
+        ESP_LOGI(TAG, "📊 Estado BME680: NO INICIALIZADO");
+        return;
+    }
+    
+    const char* mode_str[] = {"SLEEP", "FORCED", "PARALLEL", "NORMAL"};
+    const char* osr_str[] = {"NONE", "1X", "2X", "4X", "8X", "16X"};
+    
+    ESP_LOGI(TAG, "📊 Estado BME680:");
+    ESP_LOGI(TAG, "  🔌 Dirección I2C: 0x%02X", bme680_current_addr);
+    ESP_LOGI(TAG, "  🎛️  Modo: %s", mode_str[bme680_dev.mode]);
+    ESP_LOGI(TAG, "  📈 Oversampling - T:%s, P:%s, H:%s", 
+             osr_str[bme680_dev.osr_t], osr_str[bme680_dev.osr_p], osr_str[bme680_dev.osr_h]);
+    ESP_LOGI(TAG, "  🔥 Heater: %d°C por %dms", bme680_dev.heater_temp, bme680_dev.heater_duration);
+    ESP_LOGI(TAG, "  🌡️  Temp ambiente: %d°C", bme680_dev.ambient_temp);
+    ESP_LOGI(TAG, "  ✅ Inicializado: %s", bme680_dev.initialized ? "SÍ" : "NO");
+    
+    // Mostrar última lectura
+    if (last_sensor_data.temperature > -100.0f) {
+        ESP_LOGI(TAG, "  📊 Última lectura - T:%.2f°C, H:%.1f%%, P:%.2fhPa", 
+                 last_sensor_data.temperature, last_sensor_data.humidity, last_sensor_data.pressure);
+    }
+}
+
+// ==================== FUNCIÓN DE OPTIMIZACIÓN PARA BAJO CONSUMO (NUEVA) ====================
+
+esp_err_t bme680_set_low_power_mode(void) {
+    ESP_LOGI(TAG, "🔋 Configurando modo bajo consumo...");
+    
+    bme680_config_t low_power_config = {
+        .osr_temperature = BME680_OSR_1X,    // Menos oversampling = menos consumo
+        .osr_pressure = BME680_OSR_1X,
+        .osr_humidity = BME680_OSR_1X,
+        .operation_mode = BME680_FORCED_MODE, // Solo leer cuando se necesita
+        .heater_temperature = 0,              // Apagar heater
+        .heater_duration = 0,
+        .ambient_temperature = 25
+    };
+    
+    esp_err_t ret = bme680_apply_config(&low_power_config);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ Modo bajo consumo configurado");
+    }
+    return ret;
+}
+
+// ==================== FUNCIÓN DE OPTIMIZACIÓN PARA ALTA PRECISIÓN (NUEVA) ====================
+
+esp_err_t bme680_set_high_accuracy_mode(void) {
+    ESP_LOGI(TAG, "🎯 Configurando modo alta precisión...");
+    
+    bme680_config_t high_acc_config = {
+        .osr_temperature = BME680_OSR_16X,   // Máximo oversampling
+        .osr_pressure = BME680_OSR_16X,
+        .osr_humidity = BME680_OSR_16X,
+        .operation_mode = BME680_NORMAL_MODE, // Lecturas continuas
+        .heater_temperature = 300,            // Heater más caliente
+        .heater_duration = 150,               // Más tiempo
+        .ambient_temperature = 25
+    };
+    
+    esp_err_t ret = bme680_apply_config(&high_acc_config);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ Modo alta precisión configurado");
+    }
+    return ret;
+}
+
+// ==================== FUNCIÓN PARA VERIFICAR HEALTH DEL SENSOR (NUEVA) ====================
+
+bool bme680_health_check(void) {
+    if (!bme680_is_connected()) {
+        ESP_LOGW(TAG, "❌ Health Check: Sensor no conectado");
+        return false;
+    }
+    
+    if (!bme680_dev.initialized) {
+        ESP_LOGW(TAG, "❌ Health Check: Sensor no inicializado");
+        return false;
+    }
+    
+    // Leer datos para verificar que funciona
+    bme680_data_t test_data;
+    esp_err_t ret = bme680_read_all_data(&test_data);
+    
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "❌ Health Check: Error leyendo datos");
+        return false;
+    }
+    
+    // Verificar que los valores están en rangos razonables
+    bool temp_ok = (test_data.temperature >= -40.0f && test_data.temperature <= 85.0f);
+    bool hum_ok = (test_data.humidity >= 0.0f && test_data.humidity <= 100.0f);
+    bool press_ok = (test_data.pressure >= 300.0f && test_data.pressure <= 1100.0f);
+    
+    if (!temp_ok || !hum_ok || !press_ok) {
+        ESP_LOGW(TAG, "❌ Health Check: Valores fuera de rango - T:%.2f H:%.1f P:%.2f", 
+                 test_data.temperature, test_data.humidity, test_data.pressure);
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "✅ Health Check: Sensor funcionando correctamente");
     return true;
 }
