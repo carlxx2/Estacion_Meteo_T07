@@ -39,7 +39,7 @@ static float read_adc_value(adc1_channel_t channel, const char* sensor_name) {
 // ==================== LECTURA PLUVIÓMETRO ====================
 
 float read_pluviometro_value(void) {
-    float voltage = read_adc_value(PLUVIOMETRO_ADC_CHANNEL, "🌧️ Pluviómetro");
+    float voltage = read_adc_value(PLUVIOMETRO_ADC_CHANNEL, "Pluviometro");
     
     // Convertir voltaje a mm de lluvia (lineal)
     float rainfall_mm = 0.0;
@@ -54,14 +54,14 @@ float read_pluviometro_value(void) {
                       (PLUVIOMETRO_MAX_VOLTAGE - PLUVIOMETRO_MIN_VOLTAGE)) * PLUVIOMETRO_MAX_MM;
     }
     
-    ESP_LOGI(TAG, "🌧️ Pluviómetro - Voltaje: %.3fV, Lluvia: %.2f mm", voltage, rainfall_mm);
+    ESP_LOGI(TAG, "Pluviometro - Voltaje: %.3fV, Lluvia: %.2f mm", voltage, rainfall_mm);
     return rainfall_mm;
 }
 
 // ==================== LECTURA ANEMÓMETRO ====================
 
 float read_anemometro_value(void) {
-    float voltage = read_adc_value(ANEMOMETRO_ADC_CHANNEL, "💨 Anemómetro");
+    float voltage = read_adc_value(ANEMOMETRO_ADC_CHANNEL, "Anemometro");
     
     // Convertir voltaje a velocidad del viento (lineal)
     float wind_speed_ms = 0.0;
@@ -78,7 +78,7 @@ float read_anemometro_value(void) {
     
     float wind_speed_kmh = wind_speed_ms * 3.6;
     
-    ESP_LOGI(TAG, "💨 Anemómetro - Voltaje: %.3fV, Velocidad: %.1f m/s (%.1f km/h)", 
+    ESP_LOGI(TAG, "Anemometro - Voltaje: %.3fV, Velocidad: %.1f m/s (%.1f km/h)", 
              voltage, wind_speed_ms, wind_speed_kmh);
     
     return wind_speed_ms;  // Retorna en m/s
@@ -87,7 +87,7 @@ float read_anemometro_value(void) {
 // ==================== INICIALIZACIÓN ====================
 
 void init_sensors(void) {
-    ESP_LOGI(TAG, "🔧 Inicializando sensores meteorológicos ADC...");
+    ESP_LOGI(TAG, "Inicializando sensores meteorológicos ADC...");
     
     // Configurar ADC para ambos sensores
     adc1_config_width(ADC_WIDTH_BIT_12);
@@ -98,9 +98,9 @@ void init_sensors(void) {
     // Anemómetro  
     adc1_config_channel_atten(ANEMOMETRO_ADC_CHANNEL, ADC_ATTEN_DB_11);
     
-    ESP_LOGI(TAG, "✅ Sensores inicializados:");
-    ESP_LOGI(TAG, "  🌧️  Pluviómetro en ADC1_CHANNEL_%d (GPIO32)", PLUVIOMETRO_ADC_CHANNEL);
-    ESP_LOGI(TAG, "  💨 Anemómetro en ADC1_CHANNEL_%d (GPIO33)", ANEMOMETRO_ADC_CHANNEL);
+    ESP_LOGI(TAG, "Sensores inicializados:");
+    ESP_LOGI(TAG, "Pluviómetro en ADC1_CHANNEL_%d (GPIO32)", PLUVIOMETRO_ADC_CHANNEL);
+    ESP_LOGI(TAG, "Anemómetro en ADC1_CHANNEL_%d (GPIO33)", ANEMOMETRO_ADC_CHANNEL);
     
     // Pequeña pausa para estabilización
     vTaskDelay(100 / portTICK_PERIOD_MS);

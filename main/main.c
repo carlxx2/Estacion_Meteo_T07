@@ -3,10 +3,10 @@
 static const char *TAG = "MAIN_SYSTEM";
 
 void app_main(void) {
-    ESP_LOGI(TAG, "🚀 Iniciando Estación Meteorológica...");
+    ESP_LOGI(TAG, "Iniciando Estacion Meteorologica...");
     
     // 1. INICIALIZAR NVS
-    ESP_LOGI(TAG, "📁 Inicializando NVS...");
+    ESP_LOGI(TAG, "Inicializando NVS...");
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -17,20 +17,21 @@ void app_main(void) {
     // 2. INICIALIZAR BME680
     bme680_init();
     if (bme680_configure_sensor() == ESP_OK) {
-        ESP_LOGI(TAG, "✅ BME680 inicializado correctamente");
+        ESP_LOGI(TAG, "BME680 inicializado correctamente");
         
         // Lectura inicial de prueba
         bme680_data_t sensor_data;
         if (bme680_read_all_data(&sensor_data) == ESP_OK) {
-            ESP_LOGI(TAG, "📊 Lectura inicial BME680:");
-            ESP_LOGI(TAG, "  🌡️  Temperatura: %.2f°C", sensor_data.temperature);
-            ESP_LOGI(TAG, "  💧 Humedad: %.1f%%", sensor_data.humidity);
-            ESP_LOGI(TAG, "  📊 Presión: %.2f hPa", sensor_data.pressure);
-            ESP_LOGI(TAG, "  🌫️  Gas: %lu Ω", (unsigned long)sensor_data.gas_resistance);
-            ESP_LOGI(TAG, "  🎯 Calidad Aire: %.1f/100", sensor_data.air_quality);
+            ESP_LOGI(TAG, "Lectura inicial BME680:");
+            ESP_LOGI(TAG, "  Temperatura: %.2fC", sensor_data.temperature);
+            ESP_LOGI(TAG, "  Humedad: %.1f%%", sensor_data.humidity);
+            ESP_LOGI(TAG, "  Presion: %.2f hPa", sensor_data.pressure);
+            ESP_LOGI(TAG, "  Gas: %lu Ohm", (unsigned long)sensor_data.gas_resistance);
+            ESP_LOGI(TAG, "  Calidad Aire: %.1f/100", sensor_data.air_quality);
+            ESP_LOGI(TAG, "  Gas raw: %d", sensor_data.raw_gas);
         }
     } else {
-        ESP_LOGE(TAG, "❌ Error inicializando BME680");
+        ESP_LOGE(TAG, "Error inicializando BME680");
     }
     
     // 3. INICIALIZAR WIFI
@@ -41,12 +42,12 @@ void app_main(void) {
     
     // 5. CONFIGURAR MQTT SI HAY WIFI
     if (wifi_is_connected()) {
-        ESP_LOGI(TAG, "✅ Modo STA - Conectado a WiFi");
+        ESP_LOGI(TAG, "Modo STA - Conectado a WiFi");
         mqtt_init();
     } else {
-        ESP_LOGW(TAG, "📡 Modo AP - Servidor de configuración activo");
+        ESP_LOGW(TAG, "Modo AP - Servidor de configuracion activo");
         ESP_LOGI(TAG, "   SSID: %s", wifi_get_ap_ssid());
-        ESP_LOGI(TAG, "   Contraseña: %s", AP_PASSWORD);
+        ESP_LOGI(TAG, "   Contrasena: %s", AP_PASSWORD);
         ESP_LOGI(TAG, "   IP: 192.168.4.1");
     }
     
@@ -56,7 +57,7 @@ void app_main(void) {
         cycle_count++;
         
         if (wifi_is_connected() && mqtt_is_connected()) {
-            ESP_LOGI(TAG, "=== CICLO %d (STA - Envío a nube) ===", cycle_count);
+            ESP_LOGI(TAG, "=== CICLO %d (STA - Envio a nube) ===", cycle_count);
             
             // Leer BME680
             bme680_data_t bme_data;
@@ -76,13 +77,16 @@ void app_main(void) {
             // Leer sensores para monitor local
             bme680_data_t bme_data;
             bme680_read_all_data(&bme_data);
-            read_pluviometro_value();
-            read_anemometro_value();
+            float rainfall = read_pluviometro_value();
+            float wind_speed = read_anemometro_value();
             
-            ESP_LOGI(TAG, "📊 Lectura local - Temp: %.1f°C, Lluvia: %.1fmm, Viento: %.1fm/s",
-                     bme_data.temperature, 
-                     read_pluviometro_value(),
-                     read_anemometro_value());
+            ESP_LOGI(TAG, "Lectura local completa:");
+            ESP_LOGI(TAG, "  Temperatura: %.1fC, Humedad: %.1f%%, Presion: %.2fhPa", 
+                     bme_data.temperature, bme_data.humidity, bme_data.pressure);
+            ESP_LOGI(TAG, "  Gas: %lu Ohm, Calidad: %.1f/100", 
+                     (unsigned long)bme_data.gas_resistance, bme_data.air_quality);
+            ESP_LOGI(TAG, "  Lluvia: %.1fmm, Viento: %.1fm/s (%.1f km/h)",
+                     rainfall, wind_speed, wind_speed * 3.6);
         }
         
         // Esperar 5 segundos entre lecturas (ajustable)

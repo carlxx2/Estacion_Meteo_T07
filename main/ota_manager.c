@@ -3,8 +3,8 @@
 static const char *TAG = "OTA_MANAGER";
 
 void verify_github_url(void) {
-    ESP_LOGI(TAG, "🔍 Verificando URL de GitHub...");
-    ESP_LOGI(TAG, "📋 URL actual: %s", GITHUB_FIRMWARE_URL);
+    ESP_LOGI(TAG, "Verificando URL de GitHub...");
+    ESP_LOGI(TAG, "URL actual: %s", GITHUB_FIRMWARE_URL);
     
     // Prueba estas URLs alternativas:
     const char* test_urls[] = {
@@ -14,7 +14,7 @@ void verify_github_url(void) {
     };
     
     for (int i = 0; i < sizeof(test_urls)/sizeof(test_urls[0]); i++) {
-        ESP_LOGI(TAG, "🔗 Probando: %s", test_urls[i]);
+        ESP_LOGI(TAG, "Probando: %s", test_urls[i]);
         
         esp_http_client_config_t config = {
             .url = test_urls[i],
@@ -28,10 +28,10 @@ void verify_github_url(void) {
         
         if (err == ESP_OK) {
             int status = esp_http_client_get_status_code(client);
-            ESP_LOGI(TAG, "📡 Status: %d - %s", status, 
-                    status == 200 ? "✅ ARCHIVO ENCONTRADO" : "❌ NO ENCONTRADO");
+            ESP_LOGI(TAG, "Status: %d - %s", status, 
+                    status == 200 ? "ARCHIVO ENCONTRADO" : "NO ENCONTRADO");
         } else {
-            ESP_LOGE(TAG, "❌ Error: %s", esp_err_to_name(err));
+            ESP_LOGE(TAG, "Error: %s", esp_err_to_name(err));
         }
         
         esp_http_client_cleanup(client);
@@ -40,14 +40,14 @@ void verify_github_url(void) {
 }
 
 void check_ota_updates(void) {
-    ESP_LOGI(TAG, "🔍 OTA con diagnóstico completo...");
+    ESP_LOGI(TAG, "OTA con diagnóstico completo...");
     
     // 1. Primero verificar la URL
     verify_github_url();
     vTaskDelay(2000 / portTICK_PERIOD_MS);
     
     // 2. Intentar OTA
-    ESP_LOGI(TAG, "📥 Iniciando descarga OTA...");
+    ESP_LOGI(TAG, "Iniciando descarga OTA...");
     
     esp_http_client_config_t config = {
         .url = GITHUB_FIRMWARE_URL,
@@ -64,15 +64,15 @@ void check_ota_updates(void) {
     esp_err_t ret = esp_https_ota(&ota_config);
     
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "🎉 OTA EXITOSO! Reiniciando...");
+        ESP_LOGI(TAG, "OTA EXITOSO! Reiniciando...");
         vTaskDelay(3000 / portTICK_PERIOD_MS);
         esp_restart();
     } else {
-        ESP_LOGE(TAG, "❌ OTA falló: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "OTA falló: %s", esp_err_to_name(ret));
         
         // Diagnóstico específico
         if (ret == ESP_FAIL) {
-            ESP_LOGE(TAG, "💡 Posibles causas:");
+            ESP_LOGE(TAG, "Posibles causas:");
             ESP_LOGE(TAG, "   • Archivo no existe en GitHub (404)");
             ESP_LOGE(TAG, "   • Ruta incorrecta");
             ESP_LOGE(TAG, "   • Archivo no commiteado");
