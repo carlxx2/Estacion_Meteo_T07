@@ -1,4 +1,4 @@
-// system_config.h - AGREGAR NUEVAS DEFINICIONES
+// system_config.h - CONFIGURACIÓN COMPLETA DEL SISTEMA
 #ifndef SYSTEM_CONFIG_H
 #define SYSTEM_CONFIG_H
 
@@ -23,6 +23,9 @@
 #include "esp_crt_bundle.h"
 #include "esp_mac.h"
 #include "driver/i2c.h"
+#include <math.h>
+#include "esp_timer.h"
+#include <time.h>
 
 // =============================================================================
 // CONFIGURACIÓN - ¡ACTUALIZA CON TUS DATOS REALES!
@@ -39,6 +42,15 @@
 #define PLUVIOMETRO_ADC_CHANNEL    ADC1_CHANNEL_4   // GPIO32
 #define ANEMOMETRO_ADC_CHANNEL     ADC1_CHANNEL_5   // GPIO33
 
+// Rangos de calibración para sensores ADC (AJUSTAR SEGÚN TU SENSOR)
+#define PLUVIOMETRO_MIN_VOLTAGE    0.0f     // 0V = 0mm (seco)
+#define PLUVIOMETRO_MAX_VOLTAGE    3.3f     // 3.3V = lluvia máxima
+#define PLUVIOMETRO_MAX_MM         100.0f   // Máxima lluvia medible en mm
+
+#define ANEMOMETRO_MIN_VOLTAGE     0.0f     // 0.0V = 0 m/s (calma)
+#define ANEMOMETRO_MAX_VOLTAGE     3.3f     // 3.3V = viento máximo
+#define ANEMOMETRO_MAX_MS          50.0f    // Máxima velocidad en m/s
+
 // =============================================================================
 // CONFIGURACIÓN BME680 - MEJORADA
 // =============================================================================
@@ -47,18 +59,12 @@
 #define I2C_MASTER_SCL_IO 22
 #define I2C_MASTER_FREQ_HZ 100000
 #define BME680_ADDR 0x77
-// =============================================================================
-// COEFICIENTES DE CALIBRACION
-// =============================================================================
-#define BME680_COEFF_ADDR1     0x89    // Dirección inicio primer bloque calibración
-#define BME680_COEFF_ADDR2     0xE1    // Dirección inicio segundo bloque calibración  
-#define BME680_COEFF_SIZE      41      // Total bytes de calibración (25 + 16)
 
 // =============================================================================
 // CALIBRACIÓN BME680 (AJUSTAR SEGÚN TU SENSOR)
 // =============================================================================
-#define BME680_TEMP_SCALE       1.0f      // Factor de escala temperatura (1.0 = perfecto)
-#define BME680_TEMP_OFFSET_C    0.0f      // Offset temperatura en °C
+#define BME680_TEMP_SCALE       1.0f      // Factor de escala temperatura
+#define BME680_TEMP_OFFSET_C    6.0f      // Offset temperatura en °C (+6°C para corregir)
 #define BME680_HUM_SCALE        1.0f      // Factor de escala humedad
 #define BME680_HUM_OFFSET_PCT   0.0f      // Offset humedad en %
 
@@ -81,10 +87,16 @@ typedef enum {
 } bme680_osr_t;
 
 // =============================================================================
+// BUFFER CIRCULAR PARA ALMACENAMIENTO LOCAL
+// =============================================================================
+#define MAX_BUFFER_SIZE          100     // Máximo 100 lecturas en buffer
+#define BUFFER_FLASH_KEY         "sensor_buffer"  // Clave para guardar en flash
+
+// =============================================================================
 // ESTRUCTURAS DE DATOS - MEJORADAS
 // =============================================================================
 
-// Estructura para datos del sensor BME680 (manteniendo tu formato)
+// Estructura para datos del sensor BME680
 typedef struct {
     float temperature;
     float humidity;
@@ -105,6 +117,27 @@ typedef struct {
     int16_t ambient_temperature;
 } bme680_config_t;
 
+// Estructura para lectura almacenada en buffer
+typedef struct {
+    float temperature;
+    float humidity;
+    float pressure;
+    uint32_t gas_resistance;
+    float air_quality;
+    float rainfall_mm;
+    float wind_speed_ms;
+    uint32_t timestamp;          // Timestamp UNIX
+} stored_reading_t;
+
+// Buffer circular
+typedef struct {
+    stored_reading_t readings[MAX_BUFFER_SIZE];
+    uint16_t head;               // Índice para escribir
+    uint16_t tail;               // Índice para leer  
+    uint16_t count;              // Número de lecturas almacenadas
+    bool buffer_full;            // Flag de buffer lleno
+} circular_buffer_t;
+
 // Estructura para datos del sistema
 typedef struct {
     float rainfall_mm;
@@ -118,22 +151,23 @@ typedef struct {
 // DECLARACIONES DE FUNCIONES - MEJORADAS
 // =============================================================================
 
-// WiFi Manager (sin cambios)
+// WiFi Manager
 void wifi_init_sta(void);
 bool wifi_is_connected(void);
 bool wifi_is_ap_mode(void);
 const char* wifi_get_ap_ssid(void);
 
-// MQTT Client (sin cambios)
+// MQTT Client
 void mqtt_init(void);
 void send_mqtt_telemetry(bme680_data_t *bme_data, float rainfall_mm, float wind_speed_ms);
+bool send_mqtt_telemetry_with_timestamp(const char *json_message);  // Nueva función
 bool mqtt_is_connected(void);
 
-// OTA Updater (sin cambios)
+// OTA Updater
 void check_ota_updates(void);
 void verify_github_url(void);
 
-// Sensor Reader (actualizada sin LDR)
+// Sensor Reader
 void init_sensors(void);
 float read_pluviometro_value(void);
 float read_anemometro_value(void);
@@ -154,4 +188,13 @@ esp_err_t bme680_set_ambient_temperature(int16_t temperature);
 bme680_mode_t bme680_get_operation_mode(void);
 esp_err_t bme680_apply_config(bme680_config_t *config);
 
-#endif
+// Data Buffer - NUEVO SISTEMA DE ALMACENAMIENTO LOCAL
+void data_buffer_init(void);
+bool data_buffer_store_reading(bme680_data_t *bme_data, float rainfall_mm, float wind_speed_ms);
+bool data_buffer_send_stored_readings(void);
+uint16_t data_buffer_get_count(void);
+bool data_buffer_is_full(void);
+void data_buffer_clear(void);
+void data_buffer_print_status(void);
+
+#endif // SYSTEM_CONFIG_H

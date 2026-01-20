@@ -95,6 +95,21 @@ void send_mqtt_telemetry(bme680_data_t *bme_data, float rainfall_mm, float wind_
     }
 }
 
+bool send_mqtt_telemetry_with_timestamp(const char *json_message) {
+    if (mqtt_conectado && mqtt_client) {
+        int msg_id = esp_mqtt_client_publish(mqtt_client, 
+                                           "v1/devices/me/telemetry",
+                                           json_message, 0, 1, 0);
+        
+        if (msg_id < 0) {
+            ESP_LOGE(TAG, "Error publicando telemetria con timestamp");
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 bool mqtt_is_connected(void) {
     return mqtt_conectado;
 }
