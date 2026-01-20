@@ -48,6 +48,13 @@
 #define I2C_MASTER_FREQ_HZ 100000
 #define BME680_ADDR 0x77
 // =============================================================================
+// COEFICIENTES DE CALIBRACION
+// =============================================================================
+#define BME680_COEFF_ADDR1     0x89    // Dirección inicio primer bloque calibración
+#define BME680_COEFF_ADDR2     0xE1    // Dirección inicio segundo bloque calibración  
+#define BME680_COEFF_SIZE      41      // Total bytes de calibración (25 + 16)
+
+// =============================================================================
 // CALIBRACIÓN BME680 (AJUSTAR SEGÚN TU SENSOR)
 // =============================================================================
 #define BME680_TEMP_SCALE       1.0f      // Factor de escala temperatura (1.0 = perfecto)
