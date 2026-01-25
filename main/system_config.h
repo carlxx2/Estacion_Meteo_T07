@@ -26,12 +26,16 @@
 #include <math.h>
 #include "esp_timer.h"
 #include <time.h>
+#include "esp_http_server.h"
+#include "esp_netif.h"
 
 // =============================================================================
 // CONFIGURACIÓN - ¡ACTUALIZA CON TUS DATOS REALES!
 // =============================================================================
-#define WIFI_SSID      "SBC"
-#define WIFI_PASS      "SBCwifi$"      
+//#define WIFI_SSID      "SBC"
+//#define WIFI_PASS      "SBCwifi$"  
+#define WIFI_SSID      "MOVISTAR_A0F0"
+#define WIFI_PASS      "qfpcNivNLpovFUn7kbp7"      
 #define MAX_INTENTOS   10
 #define AP_PASSWORD    "config123"
 #define THINGSBOARD_MQTT_URI "mqtt://demo.thingsboard.io"
@@ -64,7 +68,7 @@
 // CALIBRACIÓN BME680 (AJUSTAR SEGÚN TU SENSOR)
 // =============================================================================
 #define BME680_TEMP_SCALE       1.0f      // Factor de escala temperatura
-#define BME680_TEMP_OFFSET_C    6.0f      // Offset temperatura en °C (+6°C para corregir)
+#define BME680_TEMP_OFFSET_C    0.0f      // Offset temperatura en °C
 #define BME680_HUM_SCALE        1.0f      // Factor de escala humedad
 #define BME680_HUM_OFFSET_PCT   0.0f      // Offset humedad en %
 

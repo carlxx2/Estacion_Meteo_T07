@@ -606,9 +606,9 @@ esp_err_t bme680_configure_sensor(void) {
     bme680_dev.calib.par_t3 = 3;        // Normal: 0-10 (tienes 102 ¡ERROR!)
     
     // 2. PRESIÓN (tus valores son razonables, los mantenemos con ajuste)
-    // bme680_dev.calib.par_p1 = 36087;   // Mantener (36087 es razonable)
-    // bme680_dev.calib.par_p2 = -10411;  // Mantener (-10411 es razonable)
-    // bme680_dev.calib.par_p3 = 88;      // Mantener (88 es razonable, aunque algo alto)
+    bme680_dev.calib.par_p1 = 36087;   // Mantener (36087 es razonable)
+    bme680_dev.calib.par_p2 = -10411;  // Mantener (-10411 es razonable)
+    bme680_dev.calib.par_p3 = 88;      // Mantener (88 es razonable, aunque algo alto)
     bme680_dev.calib.par_p4 = 3275;     // Típico: ~3275
     bme680_dev.calib.par_p5 = -52;      // Típico: ~-52
     bme680_dev.calib.par_p6 = 30;       // Típico: ~30 (tienes 30 ✓)

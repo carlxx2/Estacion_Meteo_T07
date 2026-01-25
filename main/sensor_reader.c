@@ -93,10 +93,10 @@ void init_sensors(void) {
     adc1_config_width(ADC_WIDTH_BIT_12);
     
     // Pluviómetro
-    adc1_config_channel_atten(PLUVIOMETRO_ADC_CHANNEL, ADC_ATTEN_DB_11);
+    adc1_config_channel_atten(PLUVIOMETRO_ADC_CHANNEL, ADC_ATTEN_DB_12);
     
     // Anemómetro  
-    adc1_config_channel_atten(ANEMOMETRO_ADC_CHANNEL, ADC_ATTEN_DB_11);
+    adc1_config_channel_atten(ANEMOMETRO_ADC_CHANNEL, ADC_ATTEN_DB_12);
     
     ESP_LOGI(TAG, "Sensores inicializados:");
     ESP_LOGI(TAG, "Pluviómetro en ADC1_CHANNEL_%d (GPIO32)", PLUVIOMETRO_ADC_CHANNEL);

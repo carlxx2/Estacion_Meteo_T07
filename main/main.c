@@ -3,10 +3,10 @@
 static const char *TAG = "MAIN_SYSTEM";
 
 void app_main(void) {
-    ESP_LOGI(TAG, "🚀 Iniciando Estación Meteorológica...");
+    ESP_LOGI(TAG, "Iniciando Estación Meteorológica...");
     
     // 1. INICIALIZAR NVS (para buffer y WiFi)
-    ESP_LOGI(TAG, "📁 Inicializando NVS...");
+    ESP_LOGI(TAG, "Inicializando NVS...");
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -15,21 +15,21 @@ void app_main(void) {
     ESP_ERROR_CHECK(ret);
     
     // 2. INICIALIZAR BUFFER DE DATOS (¡PRIMERO!)
-    ESP_LOGI(TAG, "💾 Inicializando buffer de datos...");
+    ESP_LOGI(TAG, "Inicializando buffer de datos...");
     data_buffer_init();
     ESP_LOGI(TAG, "Buffer disponible: %d/%d lecturas", 
              data_buffer_get_count(), MAX_BUFFER_SIZE);
     
     // 3. INICIALIZAR BME680
-    ESP_LOGI(TAG, "🌡️ Inicializando sensor BME680...");
+    ESP_LOGI(TAG, "Inicializando sensor BME680...");
     bme680_init();
     if (bme680_configure_sensor() == ESP_OK) {
-        ESP_LOGI(TAG, "✅ BME680 inicializado correctamente");
+        ESP_LOGI(TAG, "BME680 inicializado correctamente");
         
         // Lectura inicial de prueba
         bme680_data_t sensor_data;
         if (bme680_read_all_data(&sensor_data) == ESP_OK) {
-            ESP_LOGI(TAG, "📊 Lectura inicial BME680:");
+            ESP_LOGI(TAG, "Lectura inicial BME680:");
             ESP_LOGI(TAG, "  Temperatura: %.2f°C", sensor_data.temperature);
             ESP_LOGI(TAG, "  Humedad: %.1f%%", sensor_data.humidity);
             ESP_LOGI(TAG, "  Presión: %.2f hPa", sensor_data.pressure);
@@ -38,23 +38,23 @@ void app_main(void) {
             ESP_LOGI(TAG, "  Gas raw: %d", sensor_data.raw_gas);
         }
     } else {
-        ESP_LOGE(TAG, "❌ Error inicializando BME680");
+        ESP_LOGE(TAG, "Error inicializando BME680");
     }
     
     // 4. INICIALIZAR WIFI
-    ESP_LOGI(TAG, "📡 Inicializando WiFi...");
+    ESP_LOGI(TAG, "Inicializando WiFi...");
     wifi_init_sta();
     
     // 5. INICIALIZAR SENSORES METEOROLÓGICOS
-    ESP_LOGI(TAG, "🌧️ Inicializando sensores meteorológicos...");
+    ESP_LOGI(TAG, "Inicializando sensores meteorológicos...");
     init_sensors();
     
     // 6. CONFIGURAR MQTT SI HAY WIFI
     if (wifi_is_connected()) {
-        ESP_LOGI(TAG, "✅ Modo STA - Conectado a WiFi");
+        ESP_LOGI(TAG, "Modo STA - Conectado a WiFi");
         mqtt_init();
     } else {
-        ESP_LOGW(TAG, "📡 Modo AP - Servidor de configuración activo");
+        ESP_LOGW(TAG, "Modo AP - Servidor de configuración activo");
         ESP_LOGI(TAG, "   SSID: %s", wifi_get_ap_ssid());
         ESP_LOGI(TAG, "   Contraseña: %s", AP_PASSWORD);
         ESP_LOGI(TAG, "   IP: 192.168.4.1");
@@ -89,11 +89,11 @@ void app_main(void) {
             
             // Detectar reconexión (si antes estaba desconectado y ahora conectado)
             if (!was_connected) {
-                ESP_LOGI(TAG, "🔄 ¡RECONEXIÓN DETECTADA!");
+                ESP_LOGI(TAG, "¡RECONEXIÓN DETECTADA!");
                 
                 // Enviar datos almacenados en buffer primero
                 if (data_buffer_get_count() > 0) {
-                    ESP_LOGI(TAG, "📤 Enviando %d lecturas almacenadas...", 
+                    ESP_LOGI(TAG, "Enviando %d lecturas almacenadas...", 
                              data_buffer_get_count());
                     
                     // Mostrar estado antes de enviar
@@ -103,21 +103,21 @@ void app_main(void) {
                     bool send_success = data_buffer_send_stored_readings();
                     
                     if (send_success) {
-                        ESP_LOGI(TAG, "✅ Datos almacenados enviados correctamente");
+                        ESP_LOGI(TAG, "Datos almacenados enviados correctamente");
                     } else {
-                        ESP_LOGW(TAG, "⚠️ Algunos datos no se pudieron enviar");
+                        ESP_LOGW(TAG, "Algunos datos no se pudieron enviar");
                     }
                 } else {
-                    ESP_LOGI(TAG, "✅ No hay datos almacenados pendientes");
+                    ESP_LOGI(TAG, "No hay datos almacenados pendientes");
                 }
             }
             
             // Enviar lectura actual (además de las almacenadas)
             if (bme_result == ESP_OK) {
                 send_mqtt_telemetry(&bme_data, rainfall_mm, wind_speed_ms);
-                ESP_LOGI(TAG, "📤 Lectura actual enviada a la nube");
+                ESP_LOGI(TAG, "Lectura actual enviada a la nube");
             } else {
-                ESP_LOGE(TAG, "❌ Error leyendo BME680, no se envía lectura actual");
+                ESP_LOGE(TAG, "Error leyendo BME680, no se envía lectura actual");
             }
             
         } else {
@@ -130,25 +130,25 @@ void app_main(void) {
                 bool stored = data_buffer_store_reading(&bme_data, rainfall_mm, wind_speed_ms);
                 
                 if (stored) {
-                    ESP_LOGI(TAG, "💾 Almacenado en buffer local");
+                    ESP_LOGI(TAG, "Almacenado en buffer local");
                     ESP_LOGI(TAG, "   Total almacenado: %d/%d lecturas", 
                              data_buffer_get_count(), MAX_BUFFER_SIZE);
                     
                     // Advertencia si el buffer está casi lleno
                     if (data_buffer_is_full()) {
-                        ESP_LOGW(TAG, "⚠️ ¡BUFFER LLENO! Las lecturas más antiguas se sobrescribirán");
+                        ESP_LOGW(TAG, "¡BUFFER LLENO! Las lecturas mas antiguas se sobrescribiran");
                     } else if (data_buffer_get_count() > (MAX_BUFFER_SIZE * 0.8)) {
-                        ESP_LOGW(TAG, "⚠️ Buffer al 80%% de capacidad");
+                        ESP_LOGW(TAG, "Buffer al 80%% de capacidad");
                     }
                 } else {
-                    ESP_LOGE(TAG, "❌ Error almacenando en buffer");
+                    ESP_LOGE(TAG, "Error almacenando en buffer");
                 }
             } else {
-                ESP_LOGW(TAG, "⚠️ No se almacena: Error en lectura del sensor");
+                ESP_LOGW(TAG, "No se almacena: Error en lectura del sensor");
             }
             
             // Mostrar lectura local (solo para monitorización)
-            ESP_LOGI(TAG, "📊 Lectura local:");
+            ESP_LOGI(TAG, "Lectura local:");
             ESP_LOGI(TAG, "   Temperatura: %.1f°C", bme_data.temperature);
             ESP_LOGI(TAG, "   Humedad: %.1f%%", bme_data.humidity);
             ESP_LOGI(TAG, "   Presión: %.1f hPa", bme_data.pressure);
@@ -160,7 +160,7 @@ void app_main(void) {
         
         // Mostrar estado del buffer cada 10 ciclos
         if (cycle_count % 10 == 0) {
-            ESP_LOGI(TAG, "--- INFORME PERIÓDICO [Ciclo %d] ---", cycle_count);
+            ESP_LOGI(TAG, "--- INFORME PERIODICO [Ciclo %d] ---", cycle_count);
             ESP_LOGI(TAG, "Estado WiFi: %s", 
                      wifi_is_connected() ? "CONECTADO" : "DESCONECTADO");
             ESP_LOGI(TAG, "Estado MQTT: %s", 
@@ -175,7 +175,7 @@ void app_main(void) {
             
             // Verificar estado del BME680
             if (!bme680_is_connected()) {
-                ESP_LOGW(TAG, "⚠️ Advertencia: BME680 no detectado");
+                ESP_LOGW(TAG, "Advertencia: BME680 no detectado");
             }
             
             ESP_LOGI(TAG, "--------------------------------------");
@@ -183,13 +183,13 @@ void app_main(void) {
         
         // Intentar reconexión WiFi si está desconectado (cada 30 ciclos)
         if (!wifi_is_connected() && (cycle_count % 30 == 0)) {
-            ESP_LOGI(TAG, "🔄 Intentando reconexión WiFi...");
+            ESP_LOGI(TAG, "Intentando reconexion WiFi...");
             // Nota: Tu sistema WiFi ya maneja reconexiones automáticas
         }
         
         // Guardar buffer en flash periódicamente (cada 20 ciclos)
         if (cycle_count % 20 == 0 && data_buffer_get_count() > 0) {
-            ESP_LOGI(TAG, "💾 Guardando buffer en flash...");
+            ESP_LOGI(TAG, "Guardando buffer en flash...");
             // El buffer ya se guarda automáticamente, pero podemos forzar un guardado
             // La función save_buffer_to_nvs() es privada, pero se llama automáticamente
         }
@@ -201,7 +201,7 @@ void app_main(void) {
         
         // Mostrar tiempo restante antes de siguiente lectura
         int wait_seconds = 5;
-        ESP_LOGI(TAG, "⏱️ Esperando %d segundos para próxima lectura...", wait_seconds);
+        ESP_LOGI(TAG, "Esperando %d segundos para proxima lectura...", wait_seconds);
         
         // Esperar entre lecturas (5 segundos por defecto)
         vTaskDelay(wait_seconds * 1000 / portTICK_PERIOD_MS);
