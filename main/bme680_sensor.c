@@ -517,11 +517,13 @@ static float bme680_compensate_humidity(uint16_t hum_adc) {
     var3 = (float)bme680_dev.calib.par_h6 / 16384.0;
     var4 = (float)bme680_dev.calib.par_h7 / 2097152.0;
     var5 = var2 + (var3 + var4 * temp_comp) * var2 * var2;
+    const float HUMIDITY_CAL_FACTOR = 1.33f;
+    float calibrated_humidity = var5 * HUMIDITY_CAL_FACTOR;
     
-    if (var5 > 100.0) var5 = 100.0;
-    if (var5 < 0.0) var5 = 0.0;
+    if (calibrated_humidity > 100.0) calibrated_humidity = 100.0;
+    if (calibrated_humidity < 0.0) calibrated_humidity = 0.0;
     
-    return var5;
+    return calibrated_humidity;
 }
 
 static uint32_t bme680_compensate_gas(uint16_t gas_adc, uint8_t gas_range) {
@@ -545,20 +547,70 @@ static uint32_t bme680_compensate_gas(uint16_t gas_adc, uint8_t gas_range) {
 // ==================== CALCULAR CALIDAD DEL AIRE (TU FUNCIÓN) ====================
 
 static float bme680_calculate_air_quality(uint32_t gas_resistance, float humidity) {
-    float quality_score = 0.0;
-    
-    if (gas_resistance > 0) {
-        quality_score = (gas_resistance / 50000.0) * 100.0;
-        
-        if (humidity < 30.0 || humidity > 70.0) {
-            quality_score *= 0.8;
-        }
-        
-        if (quality_score > 100.0) quality_score = 100.0;
-        if (quality_score < 0.0) quality_score = 0.0;
+    if (gas_resistance == 0) {
+        return 0.0f;
     }
     
-    return quality_score;
+    ESP_LOGI(TAG, "📊 Calculando calidad aire: Gas=%luΩ, Hum=%.1f%%", 
+             (unsigned long)gas_resistance, humidity);
+    
+    // ESCALA REAL BME680:
+    // > 200,000 Ω → Excelente (90-100%)
+    // 100,000 - 200,000 Ω → Bueno (70-90%)
+    // 50,000 - 100,000 Ω → Moderado (40-70%)
+    // 10,000 - 50,000 Ω → Malo (10-40%)
+    // < 10,000 Ω → Muy malo (0-10%)
+    
+    float quality;
+    
+    if (gas_resistance > 200000) {
+        // Excelente (aire muy limpio)
+        quality = 90.0f + ((float)(gas_resistance - 200000) / 300000.0f) * 10.0f;
+        ESP_LOGI(TAG, "  Rango: Excelente (>200kΩ)");
+    } 
+    else if (gas_resistance > 100000) {
+        // Bueno (aire limpio interior)
+        quality = 70.0f + ((float)(gas_resistance - 100000) / 100000.0f) * 20.0f;
+        ESP_LOGI(TAG, "  Rango: Bueno (100-200kΩ)");
+    }
+    else if (gas_resistance > 50000) {
+        // Moderado (aire normal interior)
+        quality = 40.0f + ((float)(gas_resistance - 50000) / 50000.0f) * 30.0f;
+        ESP_LOGI(TAG, "  Rango: Moderado (50-100kΩ)");
+    }
+    else if (gas_resistance > 10000) {
+        // Malo (aire contaminado)
+        quality = 10.0f + ((float)(gas_resistance - 10000) / 40000.0f) * 30.0f;
+        ESP_LOGI(TAG, "  Rango: Malo (10-50kΩ)");
+    }
+    else {
+        // Muy malo (aire muy contaminado)
+        quality = ((float)gas_resistance / 10000.0f) * 10.0f;
+        ESP_LOGI(TAG, "  Rango: Muy malo (<10kΩ)");
+    }
+    
+    // CORRECCIÓN: Tu fórmula estaba AL REVÉS
+    // Más resistencia = MEJOR aire (no peor)
+    
+    // Ajuste por humedad (óptimo 40-60%)
+    if (humidity >= 40.0f && humidity <= 60.0f) {
+        // Humedad óptima - pequeño bonus
+        quality = quality * 1.05f;
+        ESP_LOGI(TAG, "  +5%%: Humedad óptima (%.1f%%)", humidity);
+    } 
+    else if (humidity < 30.0f || humidity > 70.0f) {
+        // Humedad extrema - reducir calidad
+        quality = quality * 0.85f;
+        ESP_LOGI(TAG, "  -15%%: Humedad extrema (%.1f%%)", humidity);
+    }
+    
+    // Limitar
+    if (quality > 100.0f) quality = 100.0f;
+    if (quality < 0.0f) quality = 0.0f;
+    
+    ESP_LOGI(TAG, "  Calidad final: %.1f%%", quality);
+    
+    return quality;
 }
 
 // ==================== CONFIGURACIÓN MEJORADA ====================

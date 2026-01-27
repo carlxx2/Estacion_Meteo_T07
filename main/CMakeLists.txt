@@ -8,7 +8,9 @@ idf_component_register(
          "ota_updater.c"
          "sensor_reader.c"
          "bme680_sensor.c" 
-         "data_buffer.c"       
+         "data_buffer.c"
+         "web_server.c"
+         "time_manager.c"       
          				# list the source files of this component
     INCLUDE_DIRS        # optional, add here public include directories
     PRIV_INCLUDE_DIRS   # optional, add here private include directories

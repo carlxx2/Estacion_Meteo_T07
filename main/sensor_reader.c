@@ -3,17 +3,6 @@
 
 static const char *TAG = "SENSOR_READER";
 
-
-
-// Rangos de calibración (AJUSTA SEGÚN TU SENSOR)
-#define PLUVIOMETRO_MIN_VOLTAGE    0.0f     // 0V = 0mm (seco)
-#define PLUVIOMETRO_MAX_VOLTAGE    0.3f     // 3.3V = lluvia máxima
-#define PLUVIOMETRO_MAX_MM         100.0f   // Máxima lluvia medible en mm
-
-#define ANEMOMETRO_MIN_VOLTAGE     0.0f     // 0.0V = 0 m/s (calma)
-#define ANEMOMETRO_MAX_VOLTAGE     0.3f     // 3.3V = viento máximo
-#define ANEMOMETRO_MAX_MS          30.0f    // Máxima velocidad en m/s
-
 // ==================== FUNCIÓN COMÚN ADC ====================
 
 static float read_adc_value(adc1_channel_t channel, const char* sensor_name) {
