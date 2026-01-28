@@ -238,6 +238,8 @@ void mqtt_init(void);                           // Inicializa cliente MQTT
 void send_mqtt_telemetry(bme680_data_t *bme_data, float rainfall_mm, float wind_speed_ms);  // Envía telemetría
 bool send_mqtt_telemetry_with_timestamp(const char *json_message);  // Envía JSON con timestamp
 bool mqtt_is_connected(void);                   // Verifica conexión MQTT
+void mqtt_force_reconnect(void);                  // Fuerza reconexión completa
+void mqtt_check_and_reconnect(void);              // Verifica y reconecta periódicamente
 
 // -----------------------------------------------------------------------------
 // MÓDULO: OTA Updater (ota_updater.c)

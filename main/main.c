@@ -49,7 +49,16 @@ static void system_initialize(void) {
     
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     
-
+	// 5. Inicializar WiFi
+    ESP_LOGI(TAG, "📡 Inicializando WiFi...");
+    wifi_init_sta();
+    
+    if (wifi_is_connected()) {
+        ESP_LOGI(TAG, "📤 Inicializando MQTT...");
+        mqtt_init();
+        ESP_LOGI(TAG, "🕐 Inicializando sistema de tiempo...");
+    	time_init();
+    }
     
     // 3. Inicializar buffer de datos (AHORA con sistema de tiempo listo)
     ESP_LOGI(TAG, "💾 Inicializando buffer de datos...");
@@ -61,14 +70,6 @@ static void system_initialize(void) {
     if (bme680_configure_sensor() != ESP_OK) {
         ESP_LOGW(TAG, "⚠️  Problema con BME680, continuando...");
     }
-    
-    // 5. Inicializar WiFi
-    ESP_LOGI(TAG, "📡 Inicializando WiFi...");
-    wifi_init_sta();
-    
-    // 2. Inicializar sistema de tiempo (PERO NO SINCRONIZAR TODAVÍA)
-    ESP_LOGI(TAG, "🕐 Inicializando sistema de tiempo...");
-    time_init();  // Solo inicializa, NO sincroniza con NTP todavía
     
     // 6. Inicializar sensores meteorológicos
     ESP_LOGI(TAG, "🌧️  Inicializando sensores meteorológicos...");
@@ -111,6 +112,13 @@ static void read_all_sensors(sensor_readings_t *readings) {
     // 3. Verificar conexiones
     readings->wifi_connected = wifi_is_connected();
     readings->mqtt_connected = mqtt_is_connected();
+    
+    // ⭐⭐ NUEVO: Verificar periódicamente MQTT ⭐⭐
+    static uint8_t check_counter = 0;
+    if (++check_counter >= 10) {  // Cada 10 ciclos (~100 segundos)
+        mqtt_check_and_reconnect();
+        check_counter = 0;
+    }
     
     sys_state.total_readings++;
 }
@@ -235,10 +243,19 @@ static void handle_connected_mode(sensor_readings_t *readings) {
         }
     }
     
-    // Detectar reconexión
+    // ⭐⭐ NUEVO: Detectar reconexión WiFi y forzar reconexión MQTT ⭐⭐
     if (!sys_state.was_connected) {
         ESP_LOGI(TAG, "🔄 ¡RECONEXIÓN DETECTADA!");
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        
+        // Esperar un momento para que la conexión WiFi sea estable
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+        
+        // Forzar reconexión MQTT si no está conectado
+        if (!readings->mqtt_connected) {
+            ESP_LOGI(TAG, "📡 WiFi reconectado pero MQTT no, forzando reconexión...");
+            mqtt_force_reconnect();
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+        }
     }
 }
 
