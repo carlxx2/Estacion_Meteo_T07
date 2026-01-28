@@ -1,6 +1,5 @@
 #include "system_config.h"
 
-
 static const char *TAG = "WEB_SERVER";
 static httpd_handle_t web_server = NULL;
 
@@ -81,7 +80,7 @@ static bool parse_form_data(const char* data, size_t data_len,
  */
 static bool save_wifi_credentials(const char* ssid, const char* password) {
     if (!ssid || strlen(ssid) == 0) {
-        ESP_LOGE(TAG, "SSID vacío, no se guarda");
+        ESP_LOGE(TAG, "SSID vacio, no se guarda");
         return false;
     }
     
@@ -112,8 +111,107 @@ static bool save_wifi_credentials(const char* ssid, const char* password) {
         return false;
     }
     
-    ESP_LOGI(TAG, "✅ Credenciales guardadas: SSID='%s'", ssid);
+    ESP_LOGI(TAG, "Credenciales guardadas: SSID='%s'", ssid);
     return true;
+}
+
+/**
+ * @brief Carga credenciales WiFi de NVS
+ */
+static bool load_wifi_credentials(char* ssid, size_t ssid_size, 
+                                 char* password, size_t pass_size) {
+    if (!ssid || !password) return false;
+    
+    ssid[0] = '\0';
+    password[0] = '\0';
+    
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("wifi_config", NVS_READONLY, &nvs_handle);
+    
+    if (err != ESP_OK) {
+        return false;
+    }
+    
+    size_t required_size = ssid_size;
+    err = nvs_get_str(nvs_handle, "ssid", ssid, &required_size);
+    
+    if (err != ESP_OK) {
+        nvs_close(nvs_handle);
+        return false;
+    }
+    
+    required_size = pass_size;
+    err = nvs_get_str(nvs_handle, "password", password, &required_size);
+    
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        // Password no configurado (red abierta)
+        password[0] = '\0';
+    } else if (err != ESP_OK) {
+        nvs_close(nvs_handle);
+        return false;
+    }
+    
+    nvs_close(nvs_handle);
+    return true;
+}
+
+/**
+ * @brief Borra credenciales WiFi de NVS
+ */
+static bool delete_wifi_credentials(void) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("wifi_config", NVS_READWRITE, &nvs_handle);
+    
+    if (err != ESP_OK) {
+        return false;
+    }
+    
+    err = nvs_erase_all(nvs_handle);
+    if (err != ESP_OK) {
+        nvs_close(nvs_handle);
+        return false;
+    }
+    
+    err = nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+    
+    if (err != ESP_OK) {
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "Credenciales borradas de NVS");
+    return true;
+}
+
+/**
+ * @brief Genera HTML para mostrar credenciales actuales
+ */
+static void generate_credentials_html(char* buffer, size_t buffer_size, 
+                                     const char* current_ssid, 
+                                     const char* current_password) {
+    if (strlen(current_ssid) == 0) {
+        // No hay credenciales guardadas
+        snprintf(buffer, buffer_size,
+            "<div style='background:#f8d7da;padding:10px;margin:10px 0;border-radius:5px;'>"
+            "<strong>NO hay credenciales guardadas</strong><br>"
+            "Configura una red WiFi para conectar"
+            "</div>");
+    } else {
+        // Mostrar credenciales actuales
+        const char* pass_display = strlen(current_password) > 0 ? 
+            "********" : "(red abierta)";
+        
+        snprintf(buffer, buffer_size,
+            "<div style='background:#d4edda;padding:10px;margin:10px 0;border-radius:5px;'>"
+            "<strong>Credenciales actuales:</strong><br>"
+            "SSID: <strong>%s</strong><br>"
+            "Contrasena: %s<br>"
+            "<form action='/delete' method='post' style='display:inline;margin-top:5px;'>"
+            "<input type='submit' value='Borrar' style='background:#dc3545;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;'>"
+            "</form>"
+            "</div>",
+            current_ssid, pass_display);
+    }
 }
 
 // =============================================================================
@@ -121,27 +219,64 @@ static bool save_wifi_credentials(const char* ssid, const char* password) {
 // =============================================================================
 
 /**
- * @brief Handler para la página principal (/)
+ * @brief Handler para la pagina principal (/)
  */
 static esp_err_t root_handler(httpd_req_t *req) {
-    ESP_LOGI(TAG, "📄 Petición a página principal desde IP");
+    ESP_LOGI(TAG, "Peticion a pagina principal desde IP");
     
-    // HTML MINIMALISTA para testing
-    const char* minimal_html = 
-        "<html><head><title>ESP32 Config</title></head>"
+    // Cargar credenciales actuales
+    char current_ssid[33] = {0};
+    char current_password[65] = {0};
+    bool has_credentials = load_wifi_credentials(current_ssid, sizeof(current_ssid), 
+                                                 current_password, sizeof(current_password));
+    
+    if (!has_credentials) {
+        current_ssid[0] = '\0';
+        current_password[0] = '\0';
+    }
+    
+    // Generar HTML para credenciales
+    char credentials_html[512];
+    generate_credentials_html(credentials_html, sizeof(credentials_html), 
+                             current_ssid, current_password);
+    
+    // HTML MINIMALISTA con credenciales
+    const char* minimal_html_template = 
+        "<html>"
+        "<head>"
+        "<title>ESP32 Config WiFi</title>"
+        "<style>"
+        "body { font-family: Arial, sans-serif; max-width: 400px; margin: 20px auto; padding: 20px; }"
+        "h1 { color: #333; }"
+        "form { background: #f9f9f9; padding: 15px; border-radius: 5px; }"
+        "input[type=text], input[type=password] { width: 95%%; padding: 8px; margin: 5px 0; }"
+        "input[type=submit] { background: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 3px; cursor: pointer; }"
+        "input[type=submit]:hover { background: #0056b3; }"
+        "</style>"
+        "</head>"
         "<body>"
-        "<h1>ESP32 Config WiFi</h1>"
-        "<p>AP: ESP32_E704</p>"
+        "<h1>ESP32 WiFi Config</h1>"
+        "<p><strong>AP:</strong> %s</p>"
+        "%s"  // Credenciales actuales
+        "<h2>Configurar Nueva Red WiFi</h2>"
         "<form action='/save' method='post'>"
-        "SSID: <input name='ssid'><br>"
-        "Pass: <input type='password' name='password'><br>"
-        "<input type='submit' value='Save'>"
+        "SSID:<br>"
+        "<input type='text' name='ssid' placeholder='Nombre de la red'><br>"
+        "Contrasena:<br>"
+        "<input type='password' name='password' placeholder='Contrasena (opcional)'><br>"
+        "<input type='submit' value='Guardar'>"
         "</form>"
-        "</body></html>";
+        "</body>"
+        "</html>";
     
-    ESP_LOGI(TAG, "Enviando respuesta HTML (%d bytes)", strlen(minimal_html));
+    // Crear HTML final
+    char final_html[2048];
+    snprintf(final_html, sizeof(final_html), minimal_html_template, 
+             wifi_get_ap_ssid(), credentials_html);
+    
+    ESP_LOGI(TAG, "Enviando respuesta HTML (%d bytes)", strlen(final_html));
     httpd_resp_set_type(req, "text/html");
-    esp_err_t ret = httpd_resp_send(req, minimal_html, strlen(minimal_html));
+    esp_err_t ret = httpd_resp_send(req, final_html, strlen(final_html));
     
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Error enviando respuesta: %s", esp_err_to_name(ret));
@@ -153,43 +288,42 @@ static esp_err_t root_handler(httpd_req_t *req) {
 }
 
 /**
- * @brief Handler para guardar configuración (/save)
+ * @brief Handler para guardar configuracion (/save)
  */
 static esp_err_t save_handler(httpd_req_t *req) {
-    ESP_LOGI(TAG, "📥 Recibiendo configuración WiFi...");
+    ESP_LOGI(TAG, "Recibiendo configuracion WiFi...");
     
-    // Validar método
+    // Validar metodo
     if (req->method != HTTP_POST) {
-        ESP_LOGE(TAG, "Método no permitido: %d (esperaba POST)", req->method);
-        httpd_resp_send_err(req, HTTPD_405_METHOD_NOT_ALLOWED, "Método no permitido");
+        ESP_LOGE(TAG, "Metodo no permitido: %d (esperaba POST)", req->method);
+        httpd_resp_send_err(req, HTTPD_405_METHOD_NOT_ALLOWED, "Metodo no permitido");
         return ESP_FAIL;
     }
     
     // Validar contenido
     if (req->content_len <= 0) {
-        ESP_LOGE(TAG, "Contenido vacío o sin Content-Length");
+        ESP_LOGE(TAG, "Contenido vacio o sin Content-Length");
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Sin datos en el formulario");
         return ESP_FAIL;
     }
     
-    // Limitar tamaño máximo razonable (2KB debería ser suficiente para SSID + password)
+    // Limitar tamaño maximo
     if (req->content_len > 2048) {
-        ESP_LOGE(TAG, "Datos POST demasiado grandes: %d bytes (máx: 2048)", req->content_len);
+        ESP_LOGE(TAG, "Datos POST demasiado grandes: %d bytes (max: 2048)", req->content_len);
         httpd_resp_send_err(req, HTTPD_431_REQ_HDR_FIELDS_TOO_LARGE, "Datos demasiado grandes");
         return ESP_FAIL;
     }
     
-    char ssid[33] = {0};      // SSID máximo 32 chars + null terminator
-    char password[65] = {0};  // Password máximo 64 chars + null terminator
+    char ssid[33] = {0};
+    char password[65] = {0};
     
-    // Buffer dinámico para los datos POST
+    // Buffer dinamico para los datos POST
     char* content = malloc(req->content_len + 1);
     if (!content) {
-        ESP_LOGE(TAG, "❌ Error de memoria al allocar %d bytes", req->content_len + 1);
+        ESP_LOGE(TAG, "Error de memoria al allocar %d bytes", req->content_len + 1);
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error interno del servidor");
         return ESP_FAIL;
     }
-    
     
     // Leer todos los datos POST
     int total_received = 0;
@@ -210,10 +344,10 @@ static esp_err_t save_handler(httpd_req_t *req) {
         }
         
         if (ret == 0) {
-            // Conexión cerrada por cliente
-            ESP_LOGE(TAG, "Conexión cerrada por cliente durante recepción");
+            // Conexion cerrada por cliente
+            ESP_LOGE(TAG, "Conexion cerrada por cliente durante recepcion");
             free(content);
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Conexión interrumpida");
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Conexion interrumpida");
             return ESP_FAIL;
         }
         
@@ -227,127 +361,174 @@ static esp_err_t save_handler(httpd_req_t *req) {
     
     // Parsear datos del formulario
     if (!parse_form_data(content, total_received, ssid, sizeof(ssid), password, sizeof(password))) {
-        ESP_LOGE(TAG, "❌ Error parseando datos del formulario");
+        ESP_LOGE(TAG, "Error parseando datos del formulario");
         free(content);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Datos del formulario inválidos");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Datos del formulario invalidos");
         return ESP_FAIL;
     }
     
-    free(content);  // Liberar buffer temporal
+    free(content);
     
     // Validar SSID
     if (strlen(ssid) == 0) {
-        ESP_LOGE(TAG, "SSID vacío");
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SSID no puede estar vacío");
+        ESP_LOGE(TAG, "SSID vacio");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SSID no puede estar vacio");
         return ESP_FAIL;
     }
     
     if (strlen(ssid) > 32) {
         ESP_LOGE(TAG, "SSID demasiado largo: %d caracteres", strlen(ssid));
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SSID demasiado largo (máx 32 chars)");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SSID demasiado largo (max 32 chars)");
         return ESP_FAIL;
     }
     
-    ESP_LOGI(TAG, "📝 Configuración recibida - SSID: '%s', Password: '%s'", 
-             ssid, strlen(password) > 0 ? "[PROTEGIDA]" : "(sin contraseña)");
+    ESP_LOGI(TAG, "Configuracion recibida - SSID: '%s', Password: '%s'", 
+             ssid, strlen(password) > 0 ? "[PROTEGIDA]" : "(sin contrasena)");
     
     // Guardar en NVS
     if (!save_wifi_credentials(ssid, password)) {
-        ESP_LOGE(TAG, "❌ Error guardando credenciales en NVS");
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error guardando configuración");
+        ESP_LOGE(TAG, "Error guardando credenciales en NVS");
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error guardando configuracion");
         return ESP_FAIL;
     }
     
-    // Página de éxito
+    // Pagina de exito con redireccion automatica
     char response[1024];
-    const char* pass_display = strlen(password) > 0 ? "********" : "(sin contraseña)";
-    
     snprintf(response, sizeof(response), 
-             "<!DOCTYPE html>\n"
-             "<html>\n"
-             "<head>\n"
-             "    <meta charset=\"UTF-8\">\n"
-             "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
-             "    <meta http-equiv=\"refresh\" content=\"5;url=/\">\n"
-             "    <title>Configuración Guardada</title>\n"
-             "    <style>\n"
-             "        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }\n"
-             "        .success { color: green; font-size: 24px; }\n"
-             "        .info { background: #f0f0f0; padding: 20px; margin: 20px; border-radius: 10px; }\n"
-             "    </style>\n"
-             "</head>\n"
-             "<body>\n"
-             "    <h1 class=\"success\">✅ Configuración Guardada</h1>\n"
-             "    <div class=\"info\">\n"
-             "        <p><strong>SSID:</strong> %s</p>\n"
-             "        <p><strong>Contraseña:</strong> %s</p>\n"
-             "    </div>\n"
-             "    <p>El dispositivo se reiniciará en 5 segundos...</p>\n"
-             "    <p>Intentará conectar a: <strong>%s</strong></p>\n"
-             "    <p><em>Si falla, volverá a modo Access Point.</em></p>\n"
-             "</body>\n"
+             "<!DOCTYPE html>"
+             "<html>"
+             "<head>"
+             "<meta charset='UTF-8'>"
+             "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
+             "<meta http-equiv='refresh' content='3;url=/'>"
+             "<title>Configuracion Guardada</title>"
+             "<style>"
+             "body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }"
+             ".success { color: green; font-size: 24px; }"
+             ".info { background: #d4edda; padding: 15px; margin: 20px; border-radius: 5px; }"
+             "</style>"
+             "</head>"
+             "<body>"
+             "<h1 class='success'>Configuracion Guardada</h1>"
+             "<div class='info'>"
+             "<p><strong>SSID:</strong> %s</p>"
+             "<p><strong>Contrasena:</strong> %s</p>"
+             "</div>"
+             "<p>Redirigiendo a la pagina principal en 3 segundos...</p>"
+             "<p>Intentara conectar a: <strong>%s</strong></p>"
+             "</body>"
              "</html>",
-             ssid, pass_display, ssid);
+             ssid, 
+             strlen(password) > 0 ? "********" : "(red abierta)",
+             ssid);
     
     httpd_resp_set_type(req, "text/html");
     httpd_resp_send(req, response, strlen(response));
     
-    // Programar reinicio (dar tiempo para que se envíe la respuesta)
-    ESP_LOGI(TAG, "🔄 Programando reinicio en 3 segundos...");
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-    ESP_LOGI(TAG, "🚀 Reiniciando para aplicar configuración WiFi...");
+    ESP_LOGI(TAG, "Configuracion guardada. Reiniciando para conectar...");
+    
+    // Pequena pausa para que se envie la respuesta
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    
+    // Programar reinicio (dar mas tiempo para que el cliente vea el mensaje)
+    ESP_LOGI(TAG, "Programando reinicio en 2 segundos...");
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    ESP_LOGI(TAG, "Reiniciando para aplicar configuracion WiFi...");
     esp_restart();
     
     return ESP_OK;
 }
+
+/**
+ * @brief Handler para borrar credenciales (/delete)
+ */
+static esp_err_t delete_handler(httpd_req_t *req) {
+    ESP_LOGI(TAG, "Recibiendo peticion para borrar credenciales...");
+    
+    // Validar metodo
+    if (req->method != HTTP_POST) {
+        ESP_LOGE(TAG, "Metodo no permitido: %d (esperaba POST)", req->method);
+        httpd_resp_send_err(req, HTTPD_405_METHOD_NOT_ALLOWED, "Metodo no permitido");
+        return ESP_FAIL;
+    }
+    
+    // Borrar credenciales
+    if (!delete_wifi_credentials()) {
+        ESP_LOGE(TAG, "Error borrando credenciales de NVS");
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error borrando configuracion");
+        return ESP_FAIL;
+    }
+    
+    // Pagina de confirmacion con redireccion
+    char response[768];
+    snprintf(response, sizeof(response), 
+             "<!DOCTYPE html>"
+             "<html>"
+             "<head>"
+             "<meta charset='UTF-8'>"
+             "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
+             "<meta http-equiv='refresh' content='3;url=/'>"
+             "<title>Credenciales Borradas</title>"
+             "<style>"
+             "body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }"
+             ".warning { color: #856404; font-size: 24px; }"
+             ".info { background: #fff3cd; padding: 15px; margin: 20px; border-radius: 5px; }"
+             "</style>"
+             "</head>"
+             "<body>"
+             "<h1 class='warning'>Credenciales Borradas</h1>"
+             "<div class='info'>"
+             "<p>Las credenciales WiFi han sido eliminadas.</p>"
+             "<p>El dispositivo volvera a modo Access Point.</p>"
+             "</div>"
+             "<p>Redirigiendo a la pagina principal en 3 segundos...</p>"
+             "</body>"
+             "</html>");
+    
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, response, strlen(response));
+    
+    ESP_LOGI(TAG, "Credenciales borradas. Reiniciando...");
+    
+    // Pausa para que se envie la respuesta
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    
+    // Programar reinicio
+    ESP_LOGI(TAG, "Programando reinicio en 2 segundos...");
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    ESP_LOGI(TAG, "Reiniciando para volver a modo Access Point...");
+    esp_restart();
+    
+    return ESP_OK;
+}
+
 // =============================================================================
-// FUNCIONES PÚBLICAS
+// FUNCIONES PUBLICAS
 // =============================================================================
 
 void web_server_start(void) {
     if (web_server != NULL) {
-        ESP_LOGW(TAG, "⚠️ Servidor web ya iniciado");
+        ESP_LOGW(TAG, "Servidor web ya iniciado");
         return;
     }
     
-    ESP_LOGI(TAG, "🌐 Iniciando servidor web de configuración...");
+    ESP_LOGI(TAG, "Iniciando servidor web de configuracion...");
     
-    // Configuración del servidor HTTP con buffers aumentados
+    // Configuracion del servidor HTTP
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
     config.ctrl_port = 32768;
-    config.max_open_sockets = 4;          // Aumentado para múltiples clientes
+    config.max_open_sockets = 4;
     config.lru_purge_enable = true;
-    config.stack_size = 12288;            // 12KB stack (crítico para HTML grande)
-    config.max_uri_handlers = 15;         // Espacio para más handlers si es necesario
-    config.recv_wait_timeout = 15;        // 15 segundos timeout recepción
-    config.send_wait_timeout = 15;        // 15 segundos timeout envío
-    config.global_user_ctx = NULL;
-    config.global_user_ctx_free_fn = NULL;
-    config.open_fn = NULL;
-    config.close_fn = NULL;
-    
-    // En versiones más nuevas de IDF, estos campos podrían estar disponibles:
-    #ifdef CONFIG_HTTPD_RECV_BUF_LEN
-    config.recv_buf_len = 4096;           // Buffer de recepción 4KB
-    #endif
-    
-    #ifdef CONFIG_HTTPD_SEND_BUF_LEN  
-    config.send_buf_len = 8192;           // Buffer de envío 8KB
-    #endif
-    
-    #ifdef CONFIG_HTTPD_TASK_PRIORITY
-    config.task_priority = 5;             // Prioridad media
-    #endif
-    
-    #ifdef CONFIG_HTTPD_TASK_AFFINITY
-    config.core_id = tskNO_AFFINITY;      // Cualquier core
-    #endif
+    config.stack_size = 12288;
+    config.max_uri_handlers = 15;
+    config.recv_wait_timeout = 15;
+    config.send_wait_timeout = 15;
     
     // Iniciar servidor
     esp_err_t ret = httpd_start(&web_server, &config);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "❌ Error iniciando servidor web: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Error iniciando servidor web: %s", esp_err_to_name(ret));
         return;
     }
     
@@ -366,22 +547,28 @@ void web_server_start(void) {
         .user_ctx = NULL
     };
     
+    httpd_uri_t delete_uri = {
+        .uri = "/delete",
+        .method = HTTP_POST,
+        .handler = delete_handler,
+        .user_ctx = NULL
+    };
+    
     // Registrar todos los handlers
     httpd_register_uri_handler(web_server, &root_uri);
     httpd_register_uri_handler(web_server, &save_uri);
+    httpd_register_uri_handler(web_server, &delete_uri);
     
-    ESP_LOGI(TAG, "✅ Servidor web iniciado correctamente");
-    ESP_LOGI(TAG, "   URL: http://192.168.4.1");
-    ESP_LOGI(TAG, "   Stack size: %d bytes", config.stack_size);
-    ESP_LOGI(TAG, "   Max sockets: %d", config.max_open_sockets);
+    ESP_LOGI(TAG, "Servidor web iniciado correctamente");
+    ESP_LOGI(TAG, "URL: http://192.168.4.1");
 }
 
 void web_server_stop(void) {
     if (web_server != NULL) {
-        ESP_LOGI(TAG, "🛑 Deteniendo servidor web...");
+        ESP_LOGI(TAG, "Deteniendo servidor web...");
         httpd_stop(web_server);
         web_server = NULL;
-        ESP_LOGI(TAG, "✅ Servidor web detenido");
+        ESP_LOGI(TAG, "Servidor web detenido");
     }
 }
 
