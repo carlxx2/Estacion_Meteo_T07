@@ -279,6 +279,8 @@ uint16_t data_buffer_get_count(void);           // Obtiene número de lecturas a
 bool data_buffer_is_full(void);                 // Verifica si buffer está lleno
 void data_buffer_clear(void);                   // Limpia buffer completamente
 void data_buffer_print_status(void);            // Muestra estado del buffer
+int data_buffer_repair_corrupt_entries(void);
+void data_buffer_clean_corrupt_readings_aggressive(void);
 
 // -----------------------------------------------------------------------------
 // MÓDULO: Web Server (web_server.c)
@@ -305,6 +307,8 @@ bool time_is_synced(void);                          // Verifica si hora está si
 const char* time_get_current_str(void);             // Hora completa "Wed Jan  1 12:00:00 2025"
 const char* time_get_current_time_str(void);        // Solo hora "12:00:00"
 const char* time_get_current_date_str(void);        // Solo fecha "2025-01-01"
+bool time_is_timestamp_valid(time_t timestamp);
+time_t time_get_validated_current(void);
 
 // Configuración manual
 void time_set_manual(time_t manual_time);           // Establece hora manualmente

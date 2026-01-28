@@ -339,3 +339,49 @@ void time_try_sync_periodic(void) {
         }
     }
 }
+
+/**
+ * @brief Valida que un timestamp sea razonable (no futuro)
+ * 
+ * @param timestamp Tiempo a validar en segundos Unix
+ * @return true si el timestamp es razonable, false si es futuro o muy antiguo
+ */
+bool time_is_timestamp_valid(time_t timestamp) {
+    // Obtener tiempo actual REAL del sistema
+    time_t current_system_time = time(NULL);
+    
+    // Si el timestamp es 0, es inválido
+    if (timestamp == 0) {
+        return false;
+    }
+    
+    // Si el timestamp es anterior a 2020, es muy antiguo
+    if (timestamp < 1577836800) {  // 2020-01-01
+        return false;
+    }
+    
+    // Si el timestamp es más de 24 horas en el futuro, es inválido
+    if (timestamp > (current_system_time + 86400)) {  // +24 horas
+        return false;
+    }
+    
+    return true;
+}
+
+/**
+ * @brief Obtiene el tiempo actual validado (evita tiempos futuros)
+ * 
+ * @return Tiempo validado en segundos Unix
+ */
+time_t time_get_validated_current(void) {
+    time_t estimated = time_get_current();
+    
+    // Si el tiempo estimado es inválido (futuro), usar tiempo de sistema
+    if (!time_is_timestamp_valid(estimated)) {
+        ESP_LOGW(TAG, "Tiempo estimado invalido (%ld), usando tiempo de sistema", 
+                 (long)estimated);
+        return time(NULL);
+    }
+    
+    return estimated;
+}

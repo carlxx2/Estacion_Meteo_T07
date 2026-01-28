@@ -16,6 +16,8 @@ typedef struct {
     int cycle_count;
     bool was_connected;
     bool system_initialized;
+    bool sending_buffered_data;  // Nueva bandera para controlar envío de buffer
+    uint8_t buffer_send_cycles;  // Contador de ciclos dedicados a vaciar buffer
 } system_state_t;
 
 static system_state_t sys_state = {0};
@@ -47,38 +49,33 @@ static void system_initialize(void) {
     
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     
-    // 2. Inicializar buffer de datos
+
+    
+    // 3. Inicializar buffer de datos (AHORA con sistema de tiempo listo)
     ESP_LOGI(TAG, "💾 Inicializando buffer de datos...");
     data_buffer_init();
     
-    // 3. Inicializar BME680
+    // 4. Inicializar BME680
     ESP_LOGI(TAG, "🌡️  Inicializando sensor BME680...");
     bme680_init();
     if (bme680_configure_sensor() != ESP_OK) {
         ESP_LOGW(TAG, "⚠️  Problema con BME680, continuando...");
     }
     
-    // 4. Inicializar WiFi (¡ESTO INICIALIZA LA PILA DE RED!)
+    // 5. Inicializar WiFi
     ESP_LOGI(TAG, "📡 Inicializando WiFi...");
     wifi_init_sta();
     
-    // 5. AHORA SÍ inicializar sistema de tiempo (después de WiFi)
+    // 2. Inicializar sistema de tiempo (PERO NO SINCRONIZAR TODAVÍA)
     ESP_LOGI(TAG, "🕐 Inicializando sistema de tiempo...");
-    time_init();
+    time_init();  // Solo inicializa, NO sincroniza con NTP todavía
     
     // 6. Inicializar sensores meteorológicos
     ESP_LOGI(TAG, "🌧️  Inicializando sensores meteorológicos...");
     init_sensors();
     
-    // 7. Si hay WiFi, sincronizar hora con NTP
-    if (wifi_is_connected()) {
-        ESP_LOGI(TAG, "⏳ Sincronizando hora con NTP...");
-        if (time_sync_with_ntp()) {
-            ESP_LOGI(TAG, "✅ Hora sincronizada: %s", time_get_current_str());
-        } else {
-            ESP_LOGW(TAG, "⚠️  No se pudo sincronizar hora, usando tiempo estimado");
-        }
-    }
+    // 7. IMPORTANTE: NO almacenar lecturas hasta que el tiempo esté sincronizado
+    //    Para eso necesitamos una bandera global
     
     // 8. Inicializar MQTT si hay WiFi
     if (wifi_is_connected()) {
@@ -118,8 +115,11 @@ static void read_all_sensors(sensor_readings_t *readings) {
     sys_state.total_readings++;
 }
 
-static int calculate_wait_time(bool is_connected) {
-    if (is_connected) {
+static int calculate_wait_time(bool is_connected, bool sending_buffer) {
+    if (sending_buffer) {
+        // Cuando estamos vaciando buffer, esperar menos tiempo
+        return 3;  // 3 segundos entre envíos de buffer
+    } else if (is_connected) {
         // ThingsBoard aguanta ~10 mensajes/minuto como máximo
         // Enviamos cada 10 segundos = 6/minuto (seguro)
         return 10;
@@ -128,27 +128,117 @@ static int calculate_wait_time(bool is_connected) {
     }
 }
 
+static void handle_buffer_empty_mode(sensor_readings_t *readings) {
+    ESP_LOGI(TAG, "=== CICLO %d (CONECTADO - BUFFER VACÍO) ===", sys_state.cycle_count);
+    
+    // 1. Leer y enviar datos actuales si son válidos
+    if (readings->bme_valid && readings->weather_valid) {
+        ESP_LOGI(TAG, "📤 Enviando datos actuales a la nube...");
+        send_mqtt_telemetry(&readings->bme_data, readings->rainfall_mm, readings->wind_speed_ms);
+        sys_state.sent_readings++;
+        
+        ESP_LOGI(TAG, "✅ Datos actuales enviados. Esperando %d segundos...", 
+                calculate_wait_time(true, false));
+    } else {
+        ESP_LOGW(TAG, "⚠️  Datos de sensores no válidos, omitiendo envío");
+    }
+    
+    // 2. Checkeo de buffer (solo cada 3 ciclos para no saturar)
+    if (sys_state.cycle_count % 3 == 0) {
+        uint16_t buffer_count = data_buffer_get_count();
+        if (buffer_count > 0) {
+            ESP_LOGI(TAG, "📦 Se detectaron %d lecturas en buffer, cambiando a modo vaciado", 
+                    buffer_count);
+            sys_state.sending_buffered_data = true;
+            sys_state.buffer_send_cycles = 0;
+        }
+    }
+}
+
+static void handle_buffer_send_mode(sensor_readings_t *readings) {
+    ESP_LOGI(TAG, "═══════════════════════════════════════════════");
+    ESP_LOGI(TAG, "📦 MODO VACIADO DE BUFFER - CICLO %d", sys_state.cycle_count);
+    ESP_LOGI(TAG, "   Buffer pendiente: %d/%d lecturas", 
+            data_buffer_get_count(), MAX_BUFFER_SIZE);
+    ESP_LOGI(TAG, "   Ciclos dedicados a vaciado: %d", sys_state.buffer_send_cycles);
+    ESP_LOGI(TAG, "═══════════════════════════════════════════════");
+    
+    // 1. Primero enviar datos del buffer
+    bool buffer_sent = data_buffer_send_stored_readings();
+    
+    if (!buffer_sent) {
+        // Si falla, intentar limpiar datos corruptos
+        ESP_LOGW(TAG, "⚠️ Fallo envío, verificando datos corruptos...");
+        int corrupt_count = data_buffer_repair_corrupt_entries();
+        
+        if (corrupt_count > 0) {
+            ESP_LOGI(TAG, "Reparadas %d lecturas, reintentando envío...", corrupt_count);
+            buffer_sent = data_buffer_send_stored_readings();
+        }
+    }
+    
+    // 2. Verificar si todavía hay datos en el buffer
+    uint16_t remaining = data_buffer_get_count();
+    
+    if (remaining == 0) {
+        // Buffer vacío, volver a modo normal
+        ESP_LOGI(TAG, "🎉 ¡BUFFER VACÍO COMPLETAMENTE!");
+        ESP_LOGI(TAG, "   Total ciclos dedicados: %d", sys_state.buffer_send_cycles);
+        ESP_LOGI(TAG, "   Volviendo a modo normal de lectura...");
+        sys_state.sending_buffered_data = false;
+        sys_state.buffer_send_cycles = 0;
+    } else {
+        // Todavía hay datos, seguir en modo vaciado
+        sys_state.buffer_send_cycles++;
+        
+        // Prevenir bloqueo infinito (máximo 20 ciclos seguidos)
+        if (sys_state.buffer_send_cycles > 20) {
+            ESP_LOGW(TAG, "⚠️  Límite de ciclos de vaciado alcanzado (20)");
+            ESP_LOGW(TAG, "   Buffer restante: %d lecturas", remaining);
+            ESP_LOGW(TAG, "   Volviendo a modo normal temporalmente...");
+            sys_state.sending_buffered_data = false;
+            sys_state.buffer_send_cycles = 0;
+        }
+    }
+    
+    // 3. Aún en modo vaciado, también leer sensores actuales PERO NO ALMACENAR
+    // (solo para monitoreo, no se envían para no saturar)
+    if (readings->bme_valid && readings->weather_valid) {
+        ESP_LOGI(TAG, "📊 Monitoreo sensores (no se envían):");
+        ESP_LOGI(TAG, "   Temp: %.2f°C, Hum: %.2f%%, Pres: %.2fhPa", 
+                readings->bme_data.temperature, 
+                readings->bme_data.humidity, 
+                readings->bme_data.pressure);
+        ESP_LOGI(TAG, "   Lluvia: %.2fmm, Viento: %.2fm/s", 
+                readings->rainfall_mm, readings->wind_speed_ms);
+    }
+}
 
 static void handle_connected_mode(sensor_readings_t *readings) {
-    ESP_LOGI(TAG, "=== CICLO %d (CONECTADO) ===", sys_state.cycle_count);
+    // Verificar si estamos en modo vaciado de buffer
+    if (sys_state.sending_buffered_data) {
+        handle_buffer_send_mode(readings);
+    } else {
+        // Verificar si hay datos en el buffer
+        uint16_t buffer_count = data_buffer_get_count();
+        
+        if (buffer_count > 0) {
+            // Hay datos en buffer, activar modo vaciado
+            ESP_LOGI(TAG, "📦 Buffer con %d lecturas pendientes", buffer_count);
+            ESP_LOGI(TAG, "🚀 Activando modo vaciado de buffer...");
+            sys_state.sending_buffered_data = true;
+            sys_state.buffer_send_cycles = 0;
+            handle_buffer_send_mode(readings);
+        } else {
+            // Buffer vacío, modo normal
+            handle_buffer_empty_mode(readings);
+        }
+    }
     
-    // 1. Detectar reconexión
+    // Detectar reconexión
     if (!sys_state.was_connected) {
         ESP_LOGI(TAG, "🔄 ¡RECONEXIÓN DETECTADA!");
         vTaskDelay(2000 / portTICK_PERIOD_MS);
-    }
-    
-    // 2. Enviar datos actuales si son válidos
-    if (readings->bme_valid && readings->weather_valid) {
-        ESP_LOGI(TAG, "📤 Enviando datos a la nube...");
-        send_mqtt_telemetry(&readings->bme_data, readings->rainfall_mm, readings->wind_speed_ms);
-        sys_state.sent_readings++;
-    }
-    
-    // 3. Enviar datos almacenados cada 5 ciclos
-    if (sys_state.cycle_count % 5 == 0 && data_buffer_get_count() > 0) {
-        ESP_LOGI(TAG, "📤 Enviando datos almacenados...");
-        data_buffer_send_stored_readings();
     }
 }
 
@@ -216,22 +306,28 @@ static void handle_disconnected_mode(sensor_readings_t *readings) {
     
     ESP_LOGI(TAG, "═══════════════════════════════════════════════");
     ESP_LOGI(TAG, "⏳ Esperando %d segundos para siguiente lectura...",
-             calculate_wait_time(false));
+             calculate_wait_time(false, false));
     ESP_LOGI(TAG, "═══════════════════════════════════════════════");
 }
 
 static void show_system_report(void) {
     if (sys_state.cycle_count % 10 == 0) {
         ESP_LOGI(TAG, "📊 INFORME [Ciclo %d]", sys_state.cycle_count);
-        ESP_LOGI(TAG, "   WiFi: %s, MQTT: %s",
+        ESP_LOGI(TAG, "   WiFi: %s, MQTT: %s, Modo: %s",
                  wifi_is_connected() ? "✅" : "❌",
-                 mqtt_is_connected() ? "✅" : "❌");
-        ESP_LOGI(TAG, "   Buffer: %d/%d lecturas",
-                 data_buffer_get_count(), MAX_BUFFER_SIZE);
+                 mqtt_is_connected() ? "✅" : "❌",
+                 sys_state.sending_buffered_data ? "VACIADO BUFFER" : "NORMAL");
+        ESP_LOGI(TAG, "   Buffer: %d/%d lecturas (%.1f%%)",
+                 data_buffer_get_count(), MAX_BUFFER_SIZE,
+                 (data_buffer_get_count() * 100.0f) / MAX_BUFFER_SIZE);
         ESP_LOGI(TAG, "   Lecturas: Total=%"PRIu32" Env=%"PRIu32", Alm=%"PRIu32"",
                  sys_state.total_readings,
                  sys_state.sent_readings,
                  sys_state.stored_readings);
+        
+        if (sys_state.sending_buffered_data) {
+            ESP_LOGI(TAG, "   Ciclos vaciado: %d/20", sys_state.buffer_send_cycles);
+        }
     }
 }
 
@@ -250,7 +346,7 @@ void app_main(void) {
     while (1) {
         sys_state.cycle_count++;
         
-        // A. Leer sensores
+        // A. Leer sensores (siempre leer para monitoreo)
         sensor_readings_t readings;
         read_all_sensors(&readings);
         
@@ -271,7 +367,7 @@ void app_main(void) {
         sys_state.was_connected = is_connected;
         
         // F. Espera
-        int wait_time = calculate_wait_time(is_connected);
+        int wait_time = calculate_wait_time(is_connected, sys_state.sending_buffered_data);
         ESP_LOGI(TAG, "⏱️  Esperando %d segundos...", wait_time);
         vTaskDelay(wait_time * 1000 / portTICK_PERIOD_MS);
     }
